@@ -21,6 +21,7 @@ from threading import Lock
 from typing import Any
 from uuid import uuid4
 
+from server.auth.accounts import AuthUser, list_users
 from server.graph.customer_service.classifier import classify_query
 from server.services import rag
 from server.services.chat_store import (
@@ -618,6 +619,9 @@ class CustomerServiceService:
                     updated_at=assistant_message["created_at"],
                 )
 
+        if result["response_mode"] == "handoff":
+            self._auto_assign(conversation_id)
+
         return {
             "conversation_id": conversation_id,
             "message_id": assistant_message["id"],
@@ -643,6 +647,9 @@ class CustomerServiceService:
             "message_count": message_count,
             "status": conversation["status"],
             "handoff_reason": conversation.get("handoff_reason"),
+            "assignee_id": conversation.get("assignee_id"),
+            "assignee_name": conversation.get("assignee_name"),
+            "assigned_at": conversation.get("assigned_at"),
             "storage": self._storage_mode,
         }
 
@@ -653,15 +660,29 @@ class CustomerServiceService:
             self._store_failed(exc)
             return self._active_store.list_messages(conversation_id)
 
-    def list_conversations(self, limit: int = 50) -> list[dict]:
+    def list_conversations(
+        self,
+        limit: int = 50,
+        filter: str = "all",
+        agent_id: str | None = None,
+    ) -> list[dict]:
+        """会话列表，支持按坐席过滤：all / mine（当前坐席）/ unassigned（待分配）。"""
         try:
-            conversations = self._active_store.list_conversations(limit)
+            conversations = self._active_store.list_conversations(500)
         except StoreUnavailable as exc:
             self._store_failed(exc)
-            conversations = self._active_store.list_conversations(limit)
+            conversations = self._active_store.list_conversations(500)
+        if filter == "mine":
+            conversations = [c for c in conversations if c.get("assignee_id") == agent_id]
+        elif filter == "unassigned":
+            # 待分配 = 已转人工但无人认领（assignee 为空）。
+            conversations = [
+                c for c in conversations
+                if not c.get("assignee_id") and c.get("status") in {"handoff", "manual"}
+            ]
         return [
             {**conversation, "storage": self._storage_mode}
-            for conversation in conversations
+            for conversation in conversations[:limit]
         ]
 
     def stream_message(
@@ -967,25 +988,34 @@ class CustomerServiceService:
         self,
         conversation_id: str,
         message: str,
-        agent_name: str = "Zenquan",
+        agent: AuthUser,
     ) -> dict:
         """人工坐席回复：仅对已转人工（或已在人工处理中）的会话开放。
 
-        消息以 ``response_mode=manual`` 落库，会话状态更新为 ``manual``，
-        避免与 AI 自动回复混在一起。
+        用登录坐席身份（agent），回复前校验 assignee——已被他人认领则拒绝；
+        未认领则自动认领当前坐席。消息以 ``response_mode=manual`` 落库。
         """
-        logger.info(
-            "人工回复 conversation_id=%s agent=%s message_len=%d",
-            conversation_id,
-            agent_name,
-            len(message),
-        )
         conversation = self.get_conversation(conversation_id)
         if conversation.get("status") not in {"handoff", "manual"}:
             raise ValueError(
                 f"会话当前状态为 {conversation.get('status')}，只有转人工后可人工回复"
             )
+        assignee_id = conversation.get("assignee_id")
+        if assignee_id and assignee_id != agent.id:
+            raise ValueError(
+                f"会话已由 {conversation.get('assignee_name') or assignee_id} 处理，"
+                "您不能回复他人会话"
+            )
+        if not assignee_id:
+            # 未认领则当前坐席自动认领（CAS，抢不到说明被并发认领，忽略继续回复）。
+            self._claim(conversation_id, agent)
 
+        logger.info(
+            "人工回复 conversation_id=%s agent=%s message_len=%d",
+            conversation_id,
+            agent.display_name,
+            len(message),
+        )
         reply = {
             "id": str(uuid4()),
             "role": "assistant",
@@ -1021,14 +1051,122 @@ class CustomerServiceService:
             reply["id"],
             detail=message,
             response_mode="manual",
+            assignee=agent.id,
         )
         return {
             "conversation_id": conversation_id,
             "message_id": reply["id"],
             "storage": self._storage_mode,
             "response_mode": "manual",
-            "agent_name": agent_name,
+            "agent_name": agent.display_name,
+            "assignee_id": agent.id,
         }
+
+    def claim_conversation(self, conversation_id: str, agent: AuthUser) -> dict:
+        """坐席领取会话（CAS 抢单）。已被他人认领或状态不对则抛 ValueError。"""
+        if not self._claim(conversation_id, agent):
+            conv = self.get_conversation(conversation_id)
+            owner = conv.get("assignee_name") or conv.get("assignee_id") or "其他坐席"
+            raise ValueError(f"会话已被 {owner} 认领")
+        self._audit_log("claimed", conversation_id, None, assignee=agent.id)
+        return {
+            "conversation_id": conversation_id,
+            "claimed": True,
+            "assignee_id": agent.id,
+            "assignee_name": agent.display_name,
+        }
+
+    def release_conversation(self, conversation_id: str, agent: AuthUser) -> dict:
+        """坐席释放会话回池（仅本人认领的会话可释放）。"""
+        try:
+            ok = self._active_store.release_conversation(conversation_id, agent.id)
+        except StoreUnavailable as exc:
+            self._store_failed(exc)
+            ok = self._active_store.release_conversation(conversation_id, agent.id)
+        if not ok:
+            raise ValueError("会话不是您认领的，无法释放")
+        self._audit_log("released", conversation_id, None, assignee=agent.id)
+        return {"conversation_id": conversation_id, "released": True}
+
+    def list_agents(self) -> list[dict]:
+        """坐席列表 + 各自在办数量（供分配与前端展示）。"""
+        try:
+            conversations = self._active_store.list_conversations(1000)
+        except StoreUnavailable as exc:
+            self._store_failed(exc)
+            conversations = self._active_store.list_conversations(1000)
+        load: dict[str, int] = {}
+        for conv in conversations:
+            aid = conv.get("assignee_id")
+            if aid:
+                load[aid] = load.get(aid, 0) + 1
+        return [
+            {
+                "id": user.id,
+                "username": user.username,
+                "display_name": user.display_name,
+                "active_count": load.get(user.id, 0),
+            }
+            for user in list_users()
+            if user.role == "operator"
+        ]
+
+    def _list_operator_agents(self) -> list[dict]:
+        """全部 operator 坐席（id + 展示名）。"""
+        return [
+            {"id": user.id, "name": user.display_name}
+            for user in list_users()
+            if user.role == "operator"
+        ]
+
+    def _claim(self, conversation_id: str, agent: AuthUser) -> bool:
+        """CAS 抢占（供 claim 接口与 manual_reply 自动认领共用）。"""
+        conversation = self.get_conversation(conversation_id)
+        if conversation.get("status") not in {"handoff", "manual"}:
+            raise ValueError(
+                f"会话当前状态为 {conversation.get('status')}，只有转人工后可认领"
+            )
+        try:
+            return self._active_store.assign_conversation(
+                conversation_id, agent.id, agent.display_name, _now()
+            )
+        except StoreUnavailable as exc:
+            self._store_failed(exc)
+            return self._active_store.assign_conversation(
+                conversation_id, agent.id, agent.display_name, _now()
+            )
+
+    def _auto_assign(self, conversation_id: str) -> None:
+        """转人工后自动指派：选在办最少的坐席（D3-A 下退化为全量坐席），无坐席则留待分配。"""
+        try:
+            agents = self._list_operator_agents()
+            if not agents:
+                return
+            try:
+                conversations = self._active_store.list_conversations(1000)
+            except StoreUnavailable as exc:
+                self._store_failed(exc)
+                conversations = self._active_store.list_conversations(1000)
+            load = {agent["id"]: 0 for agent in agents}
+            for conv in conversations:
+                aid = conv.get("assignee_id")
+                if aid in load:
+                    load[aid] += 1
+            chosen = min(agents, key=lambda a: load.get(a["id"], 0))
+            try:
+                self._active_store.assign_conversation(
+                    conversation_id, chosen["id"], chosen["name"], _now()
+                )
+            except StoreUnavailable as exc:
+                self._store_failed(exc)
+                self._active_store.assign_conversation(
+                    conversation_id, chosen["id"], chosen["name"], _now()
+                )
+            logger.info(
+                "自动指派 conversation_id=%s assignee=%s", conversation_id, chosen["id"]
+            )
+        except Exception:  # noqa: BLE001 —— 自动指派失败不阻塞转人工主流程
+            logger.debug("auto assign skipped", exc_info=True)
 
     def _persist_assistant_message(
         self,
@@ -1069,6 +1207,9 @@ class CustomerServiceService:
                     handoff_reason=handoff_reason,
                     updated_at=assistant_message["created_at"],
                 )
+        if response_mode == "handoff":
+            # 转人工后自动指派（最少在办坐席；失败/无坐席静默，留待分配池）。
+            self._auto_assign(conversation_id)
 
 
 customer_service = CustomerServiceService()
