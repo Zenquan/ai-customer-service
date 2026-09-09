@@ -81,6 +81,23 @@ export interface ManualReplyResult {
   storage: 'mysql' | 'memory' | 'memory_fallback'
   response_mode: 'manual'
   agent_name: string
+  assignee_id: string
+}
+
+/** 坐席摘要（/agents） */
+export interface AgentSummary {
+  id: string
+  username: string
+  display_name: string
+  active_count: number
+}
+
+/** 领取会话结果（/conversations/{id}/claim） */
+export interface ClaimResult {
+  conversation_id: string
+  claimed: boolean
+  assignee_id: string
+  assignee_name: string
 }
 
 /** 客服评测告警记录 */
@@ -137,6 +154,9 @@ export interface ConversationSummary {
   id: string
   status: 'open' | 'handoff' | 'waiting' | 'manual'
   handoff_reason: string | null
+  assignee_id: string | null
+  assignee_name: string | null
+  assigned_at: string | null
   created_at: string
   updated_at: string
   message_count: number
@@ -216,22 +236,37 @@ export const api = {
       },
     ),
 
-  listConversations: () => request<ConversationSummary[]>('/api/v1/conversations'),
+  listConversations: (filter: 'all' | 'mine' | 'unassigned' = 'all') =>
+    request<ConversationSummary[]>(`/api/v1/conversations?filter=${filter}`),
 
   conversationMessages: (conversationId: string) =>
     request<ConversationMessage[]>(
       `/api/v1/conversations/${encodeURIComponent(conversationId)}/messages`,
     ),
 
-  sendManualReply: (conversationId: string, message: string, agentName = 'Zenquan') =>
+  sendManualReply: (conversationId: string, message: string) =>
     request<ManualReplyResult>(
       `/api/v1/conversations/${encodeURIComponent(conversationId)}/messages/manual`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, agent_name: agentName }),
+        body: JSON.stringify({ message }),
       },
     ),
+
+  claimConversation: (conversationId: string) =>
+    request<ClaimResult>(
+      `/api/v1/conversations/${encodeURIComponent(conversationId)}/claim`,
+      { method: 'POST' },
+    ),
+
+  releaseConversation: (conversationId: string) =>
+    request<{ conversation_id: string; released: boolean }>(
+      `/api/v1/conversations/${encodeURIComponent(conversationId)}/release`,
+      { method: 'POST' },
+    ),
+
+  listAgents: () => request<AgentSummary[]>('/api/v1/agents'),
 
   recentAlerts: (limit = 50) =>
     request<EvalAlert[]>(`/api/v1/alerts/recent?limit=${limit}`),

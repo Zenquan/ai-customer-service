@@ -18,6 +18,8 @@ import {
 } from '@ant-design/icons'
 import type { ConversationSummary } from '../lib/api'
 
+export type ConversationFilter = 'all' | 'mine' | 'unassigned'
+
 type Conversation = {
   id: string
   name: string
@@ -27,6 +29,7 @@ type Conversation = {
   color: string
   status: 'active' | 'waiting' | 'handoff' | 'manual'
   unread?: number
+  assigneeName?: string | null
 }
 
 const AVATAR_COLORS = ['#2563eb', '#0f766e', '#9333ea', '#c2410c', '#be185d', '#4f46e5', '#0e7490', '#b45309']
@@ -41,7 +44,7 @@ export function toSidebarItem(item: ConversationSummary): Conversation {
     minute: '2-digit',
   })
   const summaryMap: Record<string, string> = {
-    handoff: '等待人工客服接管',
+    handoff: '待分配',
     waiting: '等待补充客户信息',
     open: 'AI 自动接待中',
     manual: '人工已回复',
@@ -57,34 +60,44 @@ export function toSidebarItem(item: ConversationSummary): Conversation {
       ? `会话 · ${item.handoff_reason.slice(0, 8)}`
       : 'AI 客服会话'
   const hash = [...item.id].reduce((sum, char) => sum + char.charCodeAt(0), 0)
+  // 有坐席认领时优先展示坐席名，否则按状态显示（handoff 且无人认领 → 待分配）
+  const summary = item.assignee_name
+    ? `坐席 · ${item.assignee_name}`
+    : summaryMap[item.status] ?? 'AI 自动接待中'
   return {
     id: item.id,
     name,
-    summary: summaryMap[item.status] ?? 'AI 自动接待中',
+    summary,
     time: timeText,
     avatar: '客',
     color: AVATAR_COLORS[hash % AVATAR_COLORS.length],
     status: item.status === 'open' ? 'active' : item.status,
+    assigneeName: item.assignee_name,
   }
 }
 
 export default function ConversationSidebar({
   conversations,
   activeId,
+  filter,
+  onFilterChange,
   onSelect,
   onNewConversation,
   onOpenKnowledge,
+  onClaim,
   currentStatus = 'active',
 }: {
   conversations: ConversationSummary[]
   activeId: string
+  filter: ConversationFilter
+  onFilterChange: (filter: ConversationFilter) => void
   onSelect: (conversationId: string) => void
   onNewConversation: () => void
   onOpenKnowledge: () => void
+  onClaim: (conversationId: string) => void
   currentStatus?: Conversation['status']
 }) {
   const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState<'all' | 'waiting' | 'handoff'>('all')
 
   const visibleConversations = conversations.map((item) =>
     item.id === activeId && activeId.startsWith('web-')
@@ -102,7 +115,6 @@ export default function ConversationSidebar({
       : toSidebarItem(item),
   )
   const filteredConversations = visibleConversations.filter((item) =>
-    (filter === 'all' || (filter === 'handoff' ? (item.status === 'handoff' || item.status === 'manual') : item.status === filter)) &&
     `${item.name} ${item.summary}`.toLowerCase().includes(search.toLowerCase()),
   )
 
@@ -113,9 +125,9 @@ export default function ConversationSidebar({
       </Button>
 
       <div className="sidebar-tabs">
-        <button className={filter === 'all' ? 'is-active' : ''} type="button" onClick={() => setFilter('all')}>全部 <span>{visibleConversations.length}</span></button>
-        <button className={filter === 'waiting' ? 'is-active' : ''} type="button" onClick={() => setFilter('waiting')}>待处理 <span>{visibleConversations.filter((item) => item.status === 'waiting').length}</span></button>
-        <button className={filter === 'handoff' ? 'is-active' : ''} type="button" onClick={() => setFilter('handoff')}>人工接管 <span>{visibleConversations.filter((item) => item.status === 'handoff' || item.status === 'manual').length}</span></button>
+        <button className={filter === 'all' ? 'is-active' : ''} type="button" onClick={() => onFilterChange('all')}>全部 <span>{visibleConversations.length}</span></button>
+        <button className={filter === 'mine' ? 'is-active' : ''} type="button" onClick={() => onFilterChange('mine')}>我的</button>
+        <button className={filter === 'unassigned' ? 'is-active' : ''} type="button" onClick={() => onFilterChange('unassigned')}>待分配</button>
       </div>
 
       <Input
@@ -128,9 +140,13 @@ export default function ConversationSidebar({
       />
 
       <div className="conversation-list">
-        <Typography.Text className="list-label">最近会话</Typography.Text>
+        <Typography.Text className="list-label">
+          {filter === 'mine' ? '我的会话' : filter === 'unassigned' ? '待认领会话' : '最近会话'}
+        </Typography.Text>
         {filteredConversations.length === 0 ? (
-          <Typography.Text type="secondary" className="conversation-empty">暂无会话，点上方「新建会话」开始</Typography.Text>
+          <Typography.Text type="secondary" className="conversation-empty">
+            {filter === 'unassigned' ? '暂无待分配的转人工会话' : filter === 'mine' ? '暂无您认领的会话' : '暂无会话，点上方「新建会话」开始'}
+          </Typography.Text>
         ) : (
           filteredConversations.map((item) => (
           <button
@@ -152,6 +168,17 @@ export default function ConversationSidebar({
                 {item.unread ? <Badge count={item.unread} color="#2563eb" /> : null}
               </span>
             </span>
+            {filter === 'unassigned' && (
+              <span
+                className="conversation-claim"
+                role="button"
+                tabIndex={0}
+                onClick={(event) => { event.stopPropagation(); onClaim(item.id) }}
+                onKeyDown={(event) => { if (event.key === 'Enter') { event.stopPropagation(); onClaim(item.id) } }}
+              >
+                领取
+              </span>
+            )}
           </button>
         ))
         )}
@@ -163,7 +190,7 @@ export default function ConversationSidebar({
         <div className="status-card-icon"><CustomerServiceOutlined /></div>
         <div>
           <Typography.Text strong>客服机器人在线</Typography.Text>
-          <Typography.Text type="secondary">知识问答 · 只读订单工具 · 自动转人工</Typography.Text>
+          <Typography.Text type="secondary">知识问答 · 订单工具 · 自动转人工</Typography.Text>
         </div>
         <span className="online-dot" />
       </div>
