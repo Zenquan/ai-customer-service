@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import pytest
 
-from server.services import customer_service
-from server.services.metrics import MemoryEvaluationRecorder
-from server.graph.customer_service import create_customer_service_agent
+from src.services import customer_service
+from src.services.metrics import MemoryEvaluationRecorder
+from src.graph.customer_service import create_customer_service_agent
 
 
 @pytest.fixture
@@ -18,8 +18,8 @@ def fresh_recorder(monkeypatch):
 
 def test_answer_with_graph_records_event_with_key_fields(fresh_recorder, monkeypatch):
     """成功路径：record_event 应被调用，字段齐全。"""
-    from server.graph.customer_service.classifier import Classifier
-    from server.graph.customer_service.nodes import Generator, Retriever
+    from src.graph.customer_service.classifier import Classifier
+    from src.graph.customer_service.nodes import Generator, Retriever
 
     def fake_retriever(query, top_k=5):
         return [{"text": "AI Agent 介绍", "doc": "guide.md", "seq": 0}]
@@ -61,7 +61,7 @@ def test_answer_with_graph_records_event_with_key_fields(fresh_recorder, monkeyp
 
 def test_answer_with_graph_records_handoff_event(fresh_recorder, monkeypatch):
     """转人工路径：response_mode=handoff、needs_human=True、handoff_reason 落事件。"""
-    from server.services.customer_service import customer_service as svc
+    from src.services.customer_service import customer_service as svc
 
     agent = create_customer_service_agent(
         retriever=lambda q, top_k=5: [],
@@ -110,7 +110,7 @@ def test_answer_with_graph_records_order_tool_event(fresh_recorder, monkeypatch)
 
 def test_first_tool_status_helper():
     """纯函数级单测。"""
-    from server.services.customer_service import _first_tool_status
+    from src.services.customer_service import _first_tool_status
 
     assert _first_tool_status(None) is None
     assert _first_tool_status([]) is None

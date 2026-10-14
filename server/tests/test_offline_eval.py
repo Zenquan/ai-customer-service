@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from server.core.offline_eval import (
+from src.core.offline_eval import (
     check_thresholds,
     compute_retrieval_metrics,
     evaluate_customer_service,

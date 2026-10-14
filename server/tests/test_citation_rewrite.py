@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from server.graph.customer_service.graph import build_customer_service_graph
+from src.graph.customer_service.graph import build_customer_service_graph
 
 
 def _contexts(query: str, top_k: int = 5) -> list[dict]:

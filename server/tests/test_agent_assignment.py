@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import pytest
 
-from server.auth import accounts as accounts_module
-from server.auth.accounts import AuthUser, _load_extra_operators
-from server.services.chat_store import MemoryChatStore
-from server.services.customer_service import customer_service
+from src.auth import accounts as accounts_module
+from src.auth.accounts import AuthUser, _load_extra_operators
+from src.services.chat_store import MemoryChatStore
+from src.services.customer_service import customer_service
 
 
 def _op(user_id: str, display_name: str) -> AuthUser:

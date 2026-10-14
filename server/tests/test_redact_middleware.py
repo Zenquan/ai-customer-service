@@ -5,8 +5,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from server.services.middleware import RedactResponseMiddleware
-from server.services.redactor import reload_rules
+from src.services.middleware import RedactResponseMiddleware
+from src.services.redactor import reload_rules
 
 
 @pytest.fixture(autouse=True)

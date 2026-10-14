@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from server.services import customer_service as cs_module
-from server.services.chat_store import MemoryChatStore, MysqlChatStore, StoreUnavailable
+from src.services import customer_service as cs_module
+from src.services.chat_store import MemoryChatStore, MysqlChatStore, StoreUnavailable
 
 class TestStoreFallback:
     def test_fallback_switches_to_memory(self, monkeypatch):
@@ -33,7 +33,7 @@ class TestStoreFallback:
         service._graph_checked = True
 
         # 不走真实 RAG/图：打桩 rag.ask
-        import server.services.rag as rag_service
+        import src.services.rag as rag_service
 
         monkeypatch.setattr(
             rag_service, "ask",

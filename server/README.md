@@ -1,6 +1,6 @@
 # server · 智能客服后端
 
-> 校准日期：2026-10-14。代码位于 `src/server`，单一 Python 包；运行数据以 `SERVER_HOME` 或启动时的当前目录为根。
+> 校准日期：2026-10-14。代码直接位于 `src/`，Python 导入包为 `src`，发行包名称仍为 `server`；运行数据以 `SERVER_HOME` 或启动时的当前目录为根。
 
 FastAPI API、RAG Core、LangGraph 客服图、演示认证与订单工具、MySQL/内存存储和评测组件。
 
@@ -13,7 +13,7 @@ uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python -e '.[local]' --group dev
 cp .env.example .env
 .venv/bin/python -m pytest
-.venv/bin/python -m uvicorn server.main:app --reload --host 127.0.0.1 --port 8000 --workers 1
+.venv/bin/python -m uvicorn src.main:app --reload --host 127.0.0.1 --port 8000 --workers 1
 ```
 
 `local` 是 FastEmbed 可选 extra，`dev` 是 pytest 依赖组；不存在 `[dev]` extra。远程 embedding 模式可把安装参数改为 `-e . --group dev`。
@@ -23,7 +23,7 @@ cp .env.example .env
 ## 目录
 
 ```text
-src/server/
+src/
 ├─ main.py          # FastAPI 应用、中间件、启动恢复、静态前端
 ├─ api/             # health/auth/docs/ingest/ask/conversations/agents/metrics/alerts
 ├─ auth/            # 演示账号、JWT、角色依赖
@@ -65,18 +65,18 @@ src/server/
 ## CLI 与验证
 
 ```bash
-.venv/bin/python -m server.cli --help
-.venv/bin/python -m server.cli cs-eval --fail-under 0.9
-.venv/bin/python -m server.cli cs-redteam --fail-under 0.9
-.venv/bin/python -m server.graph.quickstart_example '什么是混合检索？'
+.venv/bin/python -m src.cli --help
+.venv/bin/python -m src.cli cs-eval --fail-under 0.9
+.venv/bin/python -m src.cli cs-redteam --fail-under 0.9
+.venv/bin/python -m src.graph.quickstart_example '什么是混合检索？'
 
 # 使用真实向量库/模型；与 local API 服务串行运行
-.venv/bin/python -m server.cli ingest data/docs
-.venv/bin/python -m server.cli ask '什么是 AI Agent？'
-.venv/bin/python -m server.cli eval
+.venv/bin/python -m src.cli ingest data/docs
+.venv/bin/python -m src.cli ask '什么是 AI Agent？'
+.venv/bin/python -m src.cli eval
 ```
 
-pytest 已配置 `pythonpath=src`，即使包未安装也可能通过测试；CLI/uvicorn 仍需要上面的 editable 安装。开发临时验证可用 `PYTHONPATH=src .venv/bin/python -m server.cli --help`。
+pytest 已配置 `pythonpath=.`，仓库根测试入口则将 `server/` 加入搜索路径。直接从 `server/` 执行 `python -m src.cli` / `uvicorn src.main:app` 可以加载源码；从其它目录运行或使用 `server-cli` 命令时先完成 editable 安装。旧目录迁移后请重新执行安装命令，不继续使用旧 editable 路径。
 
 ## 部署与数据边界
 

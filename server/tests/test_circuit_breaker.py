@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from server.services.circuit_breaker import (
+from src.services.circuit_breaker import (
     MemoryCircuitBreaker,
     MysqlCircuitBreaker,
     build_default_circuit_breaker,
@@ -23,7 +23,7 @@ def test_closed_opens_after_threshold():
 def test_open_rejects_until_cooldown(monkeypatch):
     cb = MemoryCircuitBreaker(failure_threshold=2, cooldown_seconds=10)
     now = [0.0]
-    monkeypatch.setattr("server.services.circuit_breaker.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("src.services.circuit_breaker.time.monotonic", lambda: now[0])
     cb.record_failure("t")
     cb.record_failure("t")
     assert cb.state("t") == "open"

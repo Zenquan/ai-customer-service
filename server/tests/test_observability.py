@@ -6,9 +6,9 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
-from server.main import app
-from server.observability import setup_logging
-from server.services.customer_service import customer_service
+from src.main import app
+from src.observability import setup_logging
+from src.services.customer_service import customer_service
 
 
 @pytest.fixture(autouse=True)
@@ -74,7 +74,7 @@ def test_setup_logging_makes_info_visible_with_trace_id(capsys):
     previous_handlers = list(root.handlers)
     try:
         setup_logging()
-        logger = logging.getLogger("server.services.customer_service")
+        logger = logging.getLogger("src.services.customer_service")
         logger.info("日志链路自检")
         output = capsys.readouterr().out
         assert "日志链路自检" in output

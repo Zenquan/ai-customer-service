@@ -8,8 +8,8 @@ import json
 
 import pytest
 
-from server.core import main as rag_main  # noqa: E402
-from server.core.generate import _build_user_prompt  # noqa: E402
+from src.core import main as rag_main  # noqa: E402
+from src.core.generate import _build_user_prompt  # noqa: E402
 
 # ── ask 错误分支 ─────────────────────────────────────────────
 class TestAskErrorBranches:

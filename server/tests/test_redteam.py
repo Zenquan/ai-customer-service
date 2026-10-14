@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from server.core.offline_eval import evaluate_redteam
-from server.graph.customer_service import create_customer_service_agent
-from server.graph.customer_service.classifier import (
+from src.core.offline_eval import evaluate_redteam
+from src.graph.customer_service import create_customer_service_agent
+from src.graph.customer_service.classifier import (
     _detect_injection,
     _normalize_query,
     classify_query,

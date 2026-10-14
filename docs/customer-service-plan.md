@@ -6,7 +6,7 @@
 
 在知识问答基础上处理多轮业务查询和人工转接：回答可追溯，工具受参数与权限约束，失败进入明确澄清/人工分支。先稳定单 Agent 与评测，再按业务需要扩展。
 
-RAG 领域能力在 `server.core`，客服编排在 `server.graph.customer_service`，业务融合与持久化在 `server.services`。工具通过显式接口调用，不能由模型随意拼接内部请求。
+RAG 领域能力在 `src.core`，客服编排在 `src.graph.customer_service`，业务融合与持久化在 `src.services`。工具通过显式接口调用，不能由模型随意拼接内部请求。
 
 ## 当前能力清单
 
@@ -93,11 +93,11 @@ ToolResult:
 
 ```bash
 # 从 server/，完成 editable 安装后
-.venv/bin/python -m server.cli cs-eval --fail-under 0.9
-.venv/bin/python -m server.cli cs-redteam --fail-under 0.9
-.venv/bin/python -m server.cli cs-eval --json
+.venv/bin/python -m src.cli cs-eval --fail-under 0.9
+.venv/bin/python -m src.cli cs-redteam --fail-under 0.9
+.venv/bin/python -m src.cli cs-eval --json
 # 需要真实索引与匹配资料
-.venv/bin/python -m server.cli cs-eval --with-retrieval
+.venv/bin/python -m src.cli cs-eval --with-retrieval
 ```
 
 本次任务集有 2 条标注仍期望首次查无此单即转人工，与当前先追问行为不一致；门禁通过但逐题不是全对。详细数值、警告及未验证项见 [校准记录](documentation-audit.md)。

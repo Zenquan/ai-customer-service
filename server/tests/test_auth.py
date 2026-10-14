@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from server.auth.accounts import AuthError, authenticate
-from server.auth.tokens import create_access_token, decode_access_token
+from src.auth.accounts import AuthError, authenticate
+from src.auth.tokens import create_access_token, decode_access_token
 
 
 def test_operator_and_customer_demo_accounts():

@@ -61,7 +61,7 @@ set -a
 source .env.local
 set +a
 cd server
-.venv/bin/python -m uvicorn server.main:app --reload --host 127.0.0.1 --port 8000 --workers 1
+.venv/bin/python -m uvicorn src.main:app --reload --host 127.0.0.1 --port 8000 --workers 1
 ```
 
 ```bash
@@ -91,12 +91,14 @@ pnpm dev
 
 ## 架构与目录
 
+后端源码直接位于 `server/src/`，使用 `src.*` 导入；应用入口为 `src.main:app`，CLI 入口为 `python -m src.cli`。发行包名称仍为 `server`。迁移后重新执行 editable 安装，以更新虚拟环境的源码路径。
+
 ```text
 web/ React + Ant Design X
   ├─ lib/api.ts：JSON API + Bearer token
   └─ lib/chat-provider.ts：客服 SSE / 兼容非流式 ask
                 ↓ /api/v1（开发经 Vite 代理）
-server/src/server/
+server/src/
   ├─ main.py：路由、中间件、lifespan、静态前端
   ├─ api/：HTTP 契约、登录与坐席角色依赖
   ├─ auth/：演示账号、JWT、角色解析
@@ -104,7 +106,7 @@ server/src/server/
   ├─ graph/：客服图 + 兼容 RAG 图
   ├─ tools/：演示订单/物流只读工具
   ├─ core/：解析、切块、向量、检索、生成、引用校验
-  └─ cli.py：python -m server.cli
+  └─ cli.py：python -m src.cli
 ```
 
 运行数据默认以 `server/` 为根：`data/uploads/`、`data/_parse_cache/`、`qdrant_data/`；可通过 `SERVER_HOME` 指定根目录。必须从 `server/` 启动或设置正确的 `SERVER_HOME`。Qdrant local 同一目录只允许一个进程：API 服务与 CLI 不能同时占用本地索引。
@@ -137,24 +139,24 @@ server/.venv/bin/python -m pytest
 
 # 以下从 server/ 执行（完成 editable 安装后）
 cd server
-.venv/bin/python -m server.cli --help
-.venv/bin/python -m server.cli cs-eval --fail-under 0.9
-.venv/bin/python -m server.cli cs-redteam --fail-under 0.9
-.venv/bin/python -m server.cli cs-eval --json
-.venv/bin/python -m server.graph.quickstart_example '什么是混合检索？'
+.venv/bin/python -m src.cli --help
+.venv/bin/python -m src.cli cs-eval --fail-under 0.9
+.venv/bin/python -m src.cli cs-redteam --fail-under 0.9
+.venv/bin/python -m src.cli cs-eval --json
+.venv/bin/python -m src.graph.quickstart_example '什么是混合检索？'
 ```
 
 真实检索评测与文档操作也从 `server/` 执行，先停止占用本地索引的 API 服务：
 
 ```bash
-.venv/bin/python -m server.cli ingest data/docs
-.venv/bin/python -m server.cli ask '什么是 AI Agent？'
-.venv/bin/python -m server.cli eval
-.venv/bin/python -m server.cli cs-eval --with-retrieval
-.venv/bin/python -m server.cli doc-list
+.venv/bin/python -m src.cli ingest data/docs
+.venv/bin/python -m src.cli ask '什么是 AI Agent？'
+.venv/bin/python -m src.cli eval
+.venv/bin/python -m src.cli cs-eval --with-retrieval
+.venv/bin/python -m src.cli doc-list
 ```
 
-CLI 的 `ingest` 走 `server.core.main`，不会同步 MySQL 文档备份；需要备份时使用上传 API 或服务层 `rag.ingest_dir`。
+CLI 的 `ingest` 走 `src.core.main`，不会同步 MySQL 文档备份；需要备份时使用上传 API 或服务层 `rag.ingest_dir`。
 
 前端验证从 `web/` 执行：`pnpm lint`、`pnpm build`。CI 当前执行客服/红队门禁、选定的后端测试和前端应用类型检查，并未覆盖后端全部测试、前端 lint/build。
 

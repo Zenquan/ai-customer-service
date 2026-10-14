@@ -1,6 +1,6 @@
 # RAG Core · 解析、检索与可溯源生成
 
-> 校准日期：2026-10-14。核心代码位于 `src/server/core/`；安装依赖与配置见 [后端 README](README.md)。
+> 校准日期：2026-10-14。核心代码位于 `src/core/`；安装依赖与配置见 [后端 README](README.md)。
 
 ## 链路
 
@@ -29,14 +29,14 @@
 以下命令从 `server/` 执行，先完成 editable 安装；使用 Qdrant local 时停止 API 服务并串行执行：
 
 ```bash
-.venv/bin/python -m server.cli ingest data/docs
-.venv/bin/python -m server.cli ask '什么是 AI Agent？'
-.venv/bin/python -m server.cli ask '什么是 RAG？' --no-rerank --top-k 8
-.venv/bin/python -m server.cli run data/docs '什么是混合检索？'
-.venv/bin/python -m server.cli eval
-.venv/bin/python -m server.cli eval --rerank --ks 1 3 5
-.venv/bin/python -m server.cli doc-list
-.venv/bin/python -m server.cli doc-delete '01-AI-Agent入门.md'
+.venv/bin/python -m src.cli ingest data/docs
+.venv/bin/python -m src.cli ask '什么是 AI Agent？'
+.venv/bin/python -m src.cli ask '什么是 RAG？' --no-rerank --top-k 8
+.venv/bin/python -m src.cli run data/docs '什么是混合检索？'
+.venv/bin/python -m src.cli eval
+.venv/bin/python -m src.cli eval --rerank --ks 1 3 5
+.venv/bin/python -m src.cli doc-list
+.venv/bin/python -m src.cli doc-delete '01-AI-Agent入门.md'
 ```
 
 目录入库递归收集白名单文件，文档名保留相对路径；单文件与上传 API 使用 basename。CLI 的核心入库/删除不操作 MySQL 文档备份，生产文档管理使用 API 或服务层。
@@ -44,14 +44,14 @@
 可编程调用：
 
 ```python
-from server.core.main import ask, ingest, run
+from src.core.main import ask, ingest, run
 
 stats = ingest("data/docs")
 answer = ask("什么是 AI Agent？")
 result = run("data/docs", "什么是混合检索？")
 ```
 
-需要文档 MySQL 备份时使用 `from server.services import rag`，再调用 `rag.ingest_dir("data/docs")`，或上传 API。备份失败会降级；文档表需要预先准备。
+需要文档 MySQL 备份时使用 `from src.services import rag`，再调用 `rag.ingest_dir("data/docs")`，或上传 API。备份失败会降级；文档表需要预先准备。
 
 ## 解析、存储与引用
 
@@ -71,11 +71,11 @@ Qdrant 默认 local，配置 `QDRANT_URL` 与可选 `QDRANT_API_KEY` 后切远�
 
 目前仓库仅包含两份 Markdown 演示资料，标注集还引用额外 PDF；必须先提供匹配资料再解释检索结果。本次未跑真实检索评测，不能沿用旧文档的 Recall/MRR=1.0 作为当前结果。
 
-切块实验入口是 `python -m server.core.exp_chunk_size`，它逐轮删除当前集合并重建。仅在隔离实验数据根或实验 Qdrant 上运行，禁止直接用于业务索引。本次未执行该实验。
+切块实验入口是 `python -m src.core.exp_chunk_size`，它逐轮删除当前集合并重建。仅在隔离实验数据根或实验 Qdrant 上运行，禁止直接用于业务索引。本次未执行该实验。
 
 ## 常见问题
 
-- `ModuleNotFoundError: server`：在 `server/` 完成 editable 安装；测试配置的 pythonpath 不会自动作用于 CLI。
+- `ModuleNotFoundError: src`：从 `server/` 运行，或完成 editable 安装后从其它目录运行；测试配置的 pythonpath 不会自动作用于 CLI。
 - Qdrant `AlreadyLocked`：停止其它使用同目录的 API/CLI 进程，或使用远端 Qdrant。
 - 修好解析器后答案仍含乱码：检查索引中的旧 chunk，针对受影响文档删除后重新入库；不用默认清空整库。
 - 模型下载失败：检查网络和缓存；代码默认设置 `HF_ENDPOINT` 与禁用 XET，可通过环境覆盖。默认模型不是旧文档写的 bge-small-zh。

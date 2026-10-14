@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import pytest
 
-from server.services.audit_log import (
+from src.services.audit_log import (
     MemoryAuditLogger,
     build_default_audit_logger,
 )
-from server.services.redactor import reload_rules
+from src.services.redactor import reload_rules
 
 
 @pytest.fixture(autouse=True)

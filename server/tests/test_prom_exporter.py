@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from server.services.metrics import MemoryEvaluationRecorder
-from server.services.prom_exporter import PrometheusEvaluator
+from src.services.metrics import MemoryEvaluationRecorder
+from src.services.prom_exporter import PrometheusEvaluator
 
 
 def _sample_recorder() -> MemoryEvaluationRecorder:
@@ -86,11 +86,11 @@ def test_no_created_series_by_default():
 
 
 def test_metrics_endpoint_returns_prometheus_text():
-    """用最小 FastAPI app 挂 metrics 路由，避免触发 server.main 的 Qdrant lifespan。"""
+    """用最小 FastAPI app 挂 metrics 路由，避免触发 src.main 的 Qdrant lifespan。"""
     from fastapi import FastAPI
 
-    from server.api.metrics import router
-    from server.services.customer_service import customer_service
+    from src.api.metrics import router
+    from src.services.customer_service import customer_service
 
     rec = _sample_recorder()
     # 直接绑定到单例 recorder，走真实路由

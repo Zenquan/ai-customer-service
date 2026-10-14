@@ -1,6 +1,6 @@
 # LangGraph 编排层
 
-> 校准日期：2026-10-14。代码已合并到 `src/server/graph/`，仓库没有独立 `langgraph/` 子项目或 `langgraph.json`。
+> 校准日期：2026-10-14。代码已合并到 `src/graph/`，仓库没有独立 `langgraph/` 子项目或 `langgraph.json`。
 
 ## 客服图与服务层路由
 
@@ -32,7 +32,7 @@ START → load_session → classify_intent
 ## 目录和契约
 
 ```text
-src/server/graph/
+src/graph/
 ├─ customer_service/
 │  ├─ state.py          # CustomerServiceState
 │  ├─ classifier.py     # 规则、多意图、注入检测
@@ -47,7 +47,7 @@ src/server/graph/
 
 客服 retriever：`(query, top_k=5) -> list[dict]`；generator：`(question, contexts, history) -> (answer, citations)`；分类器输出 `intent`、`intent_confidence`、`slots`，可附多意图与澄清信息。
 
-默认适配器调用 `server.core.retrieve.retrieve` 和 `server.core.generate.generate`，不导入外部 `rag` 包。当前 RAG generator 适配器接受 `history` 但不传给核心生成函数；checkpoint 保存历史不代表 LLM 已使用全部历史。
+默认适配器调用 `src.core.retrieve.retrieve` 和 `src.core.generate.generate`，不导入外部 `rag` 包。当前 RAG generator 适配器接受 `history` 但不传给核心生成函数；checkpoint 保存历史不代表 LLM 已使用全部历史。
 
 规则分类器默认开启；`LLM_CLASSIFIER=1` 时服务层尝试 LLM 分类，低置信度（<0.7）可追问，无 key、非法输出或调用失败回退规则。多意图按投诉 > 售后 > 订单 > 问候仲裁，规则层命中提示注入后标记 `security_flag`。规则与红队基线不能证明所有注入变体都被阻断。
 
@@ -62,14 +62,14 @@ src/server/graph/
 以下 shell 命令从 `server/` 执行，先按 [后端 README](README.md) 安装：
 
 ```bash
-.venv/bin/python -m server.graph.quickstart_example '什么是混合检索？'
+.venv/bin/python -m src.graph.quickstart_example '什么是混合检索？'
 .venv/bin/python -m pytest tests/test_graph_customer_service.py tests/test_checkpoint_resume.py tests/test_citation_rewrite.py tests/test_graph_rag.py
 ```
 
 无需外部模型的客服示例（Python）：
 
 ```python
-from server.graph.customer_service import create_customer_service_agent
+from src.graph.customer_service import create_customer_service_agent
 
 agent = create_customer_service_agent(
     retriever=lambda query, top_k=5: [{"doc": "demo.md", "seq": 0, "text": "本项目使用混合检索。"}],

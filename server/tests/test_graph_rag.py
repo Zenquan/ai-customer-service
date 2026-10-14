@@ -1,8 +1,8 @@
 """RAG 图单元测试：验证节点串联、条件边（引用校验→重写）与终态汇总。"""
 from __future__ import annotations
 
-from server.graph.agent import create_agent
-from server.graph.graph import build_rag_graph
+from src.graph.agent import create_agent
+from src.graph.graph import build_rag_graph
 
 def _retriever(contexts):
     def search(query: str, top_k: int = 5) -> list[dict]:

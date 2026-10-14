@@ -4,11 +4,11 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from server.graph.customer_service import create_customer_service_agent
-from server.main import app
-from server.services import rag as rag_service
-from server.services.customer_service import customer_service
-from server.tools.orders import (
+from src.graph.customer_service import create_customer_service_agent
+from src.main import app
+from src.services import rag as rag_service
+from src.services.customer_service import customer_service
+from src.tools.orders import (
     DemoOrderStore,
     extract_order_numbers,
     query_order_status,

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from langgraph.checkpoint.memory import InMemorySaver
 
-from server.graph.customer_service.graph import build_customer_service_graph
+from src.graph.customer_service.graph import build_customer_service_graph
 
 
 def _no_contexts(query: str, top_k: int = 5) -> list[dict]:

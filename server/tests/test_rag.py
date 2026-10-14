@@ -1,9 +1,9 @@
 """纯函数单测：清洗 / 切块 / 引用校验 / 混合检索（不依赖外部服务，可离线跑）。"""
 
-from server.core.chunker import chunk_text, clean_text  # noqa: E402
-from server.core.citations import verify_citations  # noqa: E402
-import server.core.retrieve as retrieve_module  # noqa: E402
-from server.core.retrieve import _rerank_siliconflow, _rrf_merge, _tokenize  # noqa: E402
+from src.core.chunker import chunk_text, clean_text  # noqa: E402
+from src.core.citations import verify_citations  # noqa: E402
+import src.core.retrieve as retrieve_module  # noqa: E402
+from src.core.retrieve import _rerank_siliconflow, _rrf_merge, _tokenize  # noqa: E402
 
 class TestClean:
     def test_strip_and_drop_empty(self):

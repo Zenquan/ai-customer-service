@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from server.graph.customer_service import create_customer_service_agent
-from server.graph.customer_service.classifier import classify_intent, classify_query
-from server.graph.customer_service.llm_classifier import (
+from src.graph.customer_service import create_customer_service_agent
+from src.graph.customer_service.classifier import classify_intent, classify_query
+from src.graph.customer_service.llm_classifier import (
     LLMIntentClassifier,
     _extract_json,
     _sanitize,
@@ -61,7 +61,7 @@ def test_llm_classifier_returns_contract_shape():
         '{"intent": "order_query", "confidence": 0.95, "slots": {"order_no": "A00001"}}'
     )
     cls = LLMIntentClassifier(model="m", base_url="b", api_key="k")
-    with patch("server.graph.customer_service.llm_classifier.OpenAI", return_value=fake):
+    with patch("src.graph.customer_service.llm_classifier.OpenAI", return_value=fake):
         result = cls("查一下 A00001 的物流")
     assert result["intent"] == "order_query"
     assert result["intent_confidence"] == 0.95
@@ -79,7 +79,7 @@ def test_llm_classifier_low_confidence_triggers_clarify():
         MagicMock(choices=[MagicMock(message=MagicMock(content="请问您想了解哪方面的产品信息呢？"))]),
     ]
     cls = LLMIntentClassifier(model="m", base_url="b", api_key="k")
-    with patch("server.graph.customer_service.llm_classifier.OpenAI", return_value=fake):
+    with patch("src.graph.customer_service.llm_classifier.OpenAI", return_value=fake):
         result = cls("那个")
     assert result["clarify_reason"] == "请问您想了解哪方面的产品信息呢？"
 
@@ -95,7 +95,7 @@ def test_llm_classifier_falls_back_on_error():
     fake = _fake_completion('{"intent": "order_query", "confidence": 0.9, "slots": {}}')
     fake.chat.completions.create.side_effect = RuntimeError("boom")
     cls = LLMIntentClassifier(model="m", base_url="b", api_key="k")
-    with patch("server.graph.customer_service.llm_classifier.OpenAI", return_value=fake):
+    with patch("src.graph.customer_service.llm_classifier.OpenAI", return_value=fake):
         result = cls("帮我查订单物流")
     # 失败回退规则分类器，仍返回合法契约
     assert result["intent"] == "order_query"

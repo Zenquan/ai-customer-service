@@ -35,11 +35,11 @@ jobs:
 
       - name: 跑客服任务离线评测（阈值门禁）
         run: |
-          python -m server.cli cs-eval --fail-under 0.9
+          python -m src.cli cs-eval --fail-under 0.9
 
       - name: 跑红队安全评测（阈值门禁）
         run: |
-          python -m server.cli cs-redteam --fail-under 0.9
+          python -m src.cli cs-redteam --fail-under 0.9
 
       - name: 跑离线评测与图契约单测
         run: |

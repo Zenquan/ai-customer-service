@@ -10,8 +10,8 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from server.api.metrics_summary import router
-from server.services.metrics import MemoryEvaluationRecorder, _percentile
+from src.api.metrics_summary import router
+from src.services.metrics import MemoryEvaluationRecorder, _percentile
 
 
 def _recorder() -> MemoryEvaluationRecorder:
@@ -86,7 +86,7 @@ def test_empty_summary():
 
 
 def _app_with_recorder(rec) -> FastAPI:
-    from server.services.customer_service import customer_service
+    from src.services.customer_service import customer_service
 
     app = FastAPI()
     app.include_router(router)
@@ -96,8 +96,8 @@ def _app_with_recorder(rec) -> FastAPI:
 
 def _auth_headers(role: str) -> dict[str, str]:
     """用真实账号系统签发 token（operator / customer）。"""
-    from server.auth.accounts import list_users
-    from server.auth.tokens import create_access_token
+    from src.auth.accounts import list_users
+    from src.auth.tokens import create_access_token
 
     for user in list_users():
         if user.role == role:
@@ -107,7 +107,7 @@ def _auth_headers(role: str) -> dict[str, str]:
 
 
 def test_summary_endpoint_requires_operator():
-    from server.services.customer_service import customer_service
+    from src.services.customer_service import customer_service
 
     rec = _recorder()
     original = customer_service._recorder

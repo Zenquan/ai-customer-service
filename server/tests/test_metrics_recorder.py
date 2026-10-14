@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import pytest
 
-from server.services.metrics import (
+from src.services.metrics import (
     MemoryEvaluationRecorder,
     build_default_recorder,
 )
-from server.services.redactor import reload_rules
+from src.services.redactor import reload_rules
 
 
 @pytest.fixture(autouse=True)

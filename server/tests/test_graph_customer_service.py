@@ -1,7 +1,7 @@
 """客服 MVP 图契约测试：知识问答、澄清和人工接管。"""
 from __future__ import annotations
 
-from server.graph.customer_service import create_customer_service_agent
+from src.graph.customer_service import create_customer_service_agent
 
 def _retriever(contexts):
     def search(query: str, top_k: int = 5) -> list[dict]:

@@ -5,13 +5,13 @@
 """
 from __future__ import annotations
 
-from server.graph.customer_service import create_customer_service_agent
-from server.graph.customer_service.classifier import (
+from src.graph.customer_service import create_customer_service_agent
+from src.graph.customer_service.classifier import (
     classify_intent,
     classify_query,
     detect_intents,
 )
-from server.graph.customer_service.llm_classifier import _sanitize
+from src.graph.customer_service.llm_classifier import _sanitize
 
 
 # ---------------------------------------------------------------------------

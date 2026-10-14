@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from server.auth.accounts import AuthUser
-from server.services.customer_service import CustomerServiceService
+from src.auth.accounts import AuthUser
+from src.services.customer_service import CustomerServiceService
 
 # 默认坐席（与 accounts 内置 zenquan operator 一致，供转人工后的自动指派匹配）。
 AGENT = AuthUser(id="zenquan", username="zenquan", role="operator", display_name="Zenquan")
@@ -56,7 +56,7 @@ def test_customer_followup_in_manual_conversation_stays_in_human_queue(service, 
     def unexpected_ask(*_args, **_kwargs):
         raise AssertionError("人工处理中的客户消息不应进入 AI")
 
-    import server.services.rag as rag_service
+    import src.services.rag as rag_service
 
     monkeypatch.setattr(rag_service, "ask", unexpected_ask)
     list(service.stream_message("manual-3", "我要投诉", user_id="demo-user"))

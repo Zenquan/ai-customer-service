@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from server.core import config  # noqa: E402
-from server.core import ingest  # noqa: E402
+from src.core import config  # noqa: E402
+from src.core import ingest  # noqa: E402
 
 @pytest.fixture()
 def tmp_config(tmp_path, monkeypatch):

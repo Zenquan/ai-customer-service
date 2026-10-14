@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from server.services.chat_store import (
+from src.services.chat_store import (
     HISTORY_LIMIT,
     MemoryChatStore,
     MysqlChatStore,

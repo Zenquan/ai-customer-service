@@ -1,7 +1,7 @@
 # 客服任务评测指标告警规则（Prometheus）
 #
 # 抓取目标：FastAPI 服务的 /metrics 端点（cs_eval_* 指标）。
-# 指标前缀见 server/src/server/services/prom_exporter.py。
+# 指标前缀见 server/src/services/prom_exporter.py。
 #
 # 用法：在 prometheus.yml 中引用本文件，并配置 scrape_configs 指向服务 /metrics：
 #   scrape_configs:

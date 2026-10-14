@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from server.services.redactor import (
+from src.services.redactor import (
     REDACTOR_ENABLED,
     redact,
     redact_messages,
@@ -132,7 +132,7 @@ def test_module_default_redactor_enabled_flag():
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.delenv("REDACTOR_ENABLED", raising=False)
     reload_rules()
-    from server.services import redactor
+    from src.services import redactor
 
     try:
         assert redactor.REDACTOR_ENABLED is True

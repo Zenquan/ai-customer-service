@@ -11,8 +11,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from server.main import app
-from server.services import rag as rag_service
+from src.main import app
+from src.services import rag as rag_service
 
 @pytest.fixture()
 def client():

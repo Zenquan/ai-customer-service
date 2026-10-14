@@ -12,12 +12,12 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from server.services.alerts import (
+from src.services.alerts import (
     AlertEvaluator,
     MemoryAlertStore,
     MIN_SAMPLES,
 )
-from server.services.metrics import MemoryEvaluationRecorder
+from src.services.metrics import MemoryEvaluationRecorder
 
 
 def _fill(rec: MemoryEvaluationRecorder, n: int, **fields) -> None:
@@ -90,13 +90,13 @@ def test_recent_is_reversed():
 
 
 def test_alerts_endpoint_requires_operator():
-    """用最小 FastAPI app 挂 alerts 路由，避免触发 server.main 的 Qdrant lifespan。"""
+    """用最小 FastAPI app 挂 alerts 路由，避免触发 src.main 的 Qdrant lifespan。"""
     from fastapi import FastAPI
 
-    from server.api.alerts import router
-    from server.auth.dependencies import get_operator
-    from server.auth.accounts import AuthUser
-    from server.services.customer_service import customer_service
+    from src.api.alerts import router
+    from src.auth.dependencies import get_operator
+    from src.auth.accounts import AuthUser
+    from src.services.customer_service import customer_service
 
     # 注入一个 memory store，避免依赖 MySQL
     store = MemoryAlertStore()

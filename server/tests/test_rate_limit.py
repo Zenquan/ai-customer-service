@@ -5,8 +5,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from server.services.middleware import RateLimitMiddleware
-from server.services.rate_limit import (
+from src.services.middleware import RateLimitMiddleware
+from src.services.rate_limit import (
     MemoryRateLimiter,
     build_default_rate_limiter,
 )
@@ -30,7 +30,7 @@ def test_memory_isolates_keys():
 def test_memory_window_slides(monkeypatch):
     limiter = MemoryRateLimiter()
     now = [1000.0]
-    monkeypatch.setattr("server.services.rate_limit.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("src.services.rate_limit.time.monotonic", lambda: now[0])
     assert limiter.check("k", limit=1, window_seconds=10) is True
     assert limiter.check("k", limit=1, window_seconds=10) is False
     now[0] += 10.0  # 窗口过期后可再次放行

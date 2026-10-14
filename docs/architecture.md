@@ -6,7 +6,7 @@
 
 ```mermaid
 flowchart TD
-    UI[React 运营工作台 / 客户聊天窗] --> API[FastAPI server.main:app]
+    UI[React 运营工作台 / 客户聊天窗] --> API[FastAPI src.main:app]
     API --> AUTH[auth 演示 JWT 与角色依赖]
     API --> CS[services.customer_service]
     API --> RAG[services.rag]
@@ -21,9 +21,9 @@ flowchart TD
     RAG --> DOC[MySQL rag_documents]
 ```
 
-代码统一在 `server/src/server`：`api` 负责 HTTP 契约，`services` 融合业务和存储，`graph` 编排节点，`core` 实现 RAG，`tools` 封装业务源，`auth` 管理演示账号。包通过正规导入复用，没有旧版 `sys.path` 注入与独立 `rag/`、`langgraph/` 仓库。
+代码直接位于 `server/src/`：`api` 负责 HTTP 契约，`services` 融合业务和存储，`graph` 编排节点，`core` 实现 RAG，`tools` 封装业务源，`auth` 管理演示账号。Python 导入包为 `src`，发行包名称仍为 `server`；通过正规导入复用，没有旧版 `sys.path` 注入与独立 `rag/`、`langgraph/` 仓库。
 
-`server.main:app` 是模块级 FastAPI 实例，挂载 `/api/v1` 路由与根路径 `/metrics`、`/api-info`。`web/dist` 存在时挂载静态前端；`/docs`、`/redoc` 和 `/openapi.json` 是 FastAPI 自动文档。
+`src.main:app` 是模块级 FastAPI 实例，挂载 `/api/v1` 路由与根路径 `/metrics`、`/api-info`。`web/dist` 存在时挂载静态前端；`/docs`、`/redoc` 和 `/openapi.json` 是 FastAPI 自动文档。
 
 ## 入库与检索
 

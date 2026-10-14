@@ -54,4 +54,4 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${PORT:-80}/api/v1/health" || exit 1
 
 # 必须 --workers 1：Qdrant local 单进程锁
-CMD ["sh", "-c", "cd /app/server && exec python -m uvicorn server.main:app --host 0.0.0.0 --port ${PORT:-80} --workers 1"]
+CMD ["sh", "-c", "cd /app/server && exec python -m uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-80} --workers 1"]

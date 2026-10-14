@@ -10,8 +10,8 @@ import pytest
 
 from langgraph.checkpoint.memory import InMemorySaver
 
-from server.graph.customer_service import create_customer_service_agent
-from server.services.checkpoint_saver import MysqlCheckpointSaver, build_checkpointer
+from src.graph.customer_service import create_customer_service_agent
+from src.services.checkpoint_saver import MysqlCheckpointSaver, build_checkpointer
 
 
 def _retriever(contexts):

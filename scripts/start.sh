@@ -75,7 +75,7 @@ trap cleanup EXIT INT TERM
 
 echo "🚀 启动后端：http://127.0.0.1:$BACKEND_PORT"
 # 必须从 server/ 目录启动：config.SERVER_ROOT 默认取 cwd（.env/data/qdrant_data 都在 server/）
-(cd "$SERVER_DIR" && exec "$PYTHON_BIN" -m uvicorn server.main:app --reload --host 127.0.0.1 --port "$BACKEND_PORT") &
+(cd "$SERVER_DIR" && exec "$PYTHON_BIN" -m uvicorn src.main:app --reload --host 127.0.0.1 --port "$BACKEND_PORT") &
 BACKEND_PID=$!
 
 echo "🎨 启动前端：http://localhost:$FRONTEND_PORT"

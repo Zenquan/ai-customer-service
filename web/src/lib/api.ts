@@ -1,4 +1,4 @@
-/** 后端 API 类型 + 客户端（FastAPI: server.main — /api/v1 前缀） */
+/** 后端 API 类型 + 客户端（FastAPI: src.main — /api/v1 前缀） */
 
 import { getAuthToken } from './auth'
 

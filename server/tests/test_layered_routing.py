@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from server.services import rag as rag_service
-from server.services.customer_service import customer_service
+from src.services import rag as rag_service
+from src.services.customer_service import customer_service
 
 
 @pytest.fixture(autouse=True)

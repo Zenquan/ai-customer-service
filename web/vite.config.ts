@@ -11,7 +11,7 @@ export default defineConfig({
     },
   },
   server: {
-    // 开发代理：/api 转发到 FastAPI 后端（uvicorn server.main:app --port 8000）
+    // 开发代理：/api 转发到 FastAPI 后端（uvicorn src.main:app --port 8000）
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',
