@@ -1,128 +1,84 @@
-# langgraph-graph
+# LangGraph 编排层
 
-智能客服的 **LangGraph 图编排层**，复用 `rag` 核心（FastEmbed 向量 + Qdrant 混合检索 + DeepSeek 生成）。
-客服消息按“三层路由”处理：快速业务意图 → 知识 RAG 优先 → 检索无素材时澄清/转人工。
+> 校准日期：2026-10-14。代码已合并到 `src/server/graph/`，仓库没有独立 `langgraph/` 子项目或 `langgraph.json`。
 
-`rag/` 继续负责检索质量；本目录负责客服状态、意图路由、重试和人工接管。模型、检索器和分类器都可通过依赖注入替换。
+## 客服图与服务层路由
 
-## 图结构
-
-客服图：
+客服图的节点与分支：
 
 ```text
 START → load_session → classify_intent
-  ├── knowledge_question → retrieve → compose → validate → finalize
-  ├── greeting/unknown → clarify → END
-  ├── after_sale/complaint → handoff → END
-  └── order_query → extract_slots
-        ├── 缺订单号 → clarify（多轮补齐，checkpoint 恢复）
-        └── 有订单号 → execute_order_tool
-              ├── 本人订单 → 工具结果组装 answer → finalize
-              └── 非本人/查无此单/超时/异常 → handoff → END
+  ├─ knowledge_question → retrieve → compose_answer → validate_answer
+  │                                      ↑                 │
+  │                                      └─ 引用不合法重写 ─┤
+  │                                          合法 → finalize → END
+  │                                  重写仍不合法 → handoff → END
+  ├─ greeting / unknown / 低置信度追问 → clarify → END
+  ├─ after_sale / complaint → handoff → END
+  └─ order_query → extract_slots
+       ├─ 缺单号 → clarify → END
+       └─ execute_order_tool
+            ├─ ok → finalize → END
+            ├─ not_found 首次 → clarify → END
+            └─ not_found 连续两次 / forbidden / timeout / error → handoff → END
 ```
 
-客服层三层路由（`customer_service.stream_message`）：
+引用校验失败按 `MAX_REWRITES=2` 计数，达到上限转人工；不要把该常量直接解读为保证执行两次额外生成。
+
+同步客服 API 优先通过客服图处理；流式 API 在服务层做三层路由：显性业务与订单澄清续轮走图，其余知识问题走 `services.rag.ask_stream`。无素材第一次追问，下一轮仍无解转人工；人工状态客户新消息仅入队。流式知识链路尚未整体迁入图。
+
+坐席通过人工回复接口处理 `handoff/manual` 会话，身份取当前 `operator`。转人工后服务层尝试自动指派；归属、领取、释放与并发限制见 [坐席文档](../docs/agent-assignment-plan.md)。
+
+## 目录和契约
 
 ```text
-第一层：关键词显性业务意图（投诉/售后/人工/问候/带单号的订单）
-第二层：其余默认 RAG 检索 → 有素材 → 引用回答
-第三层：无素材 → 第一次明确告知并给去向（换说法 / 转人工）
-        → 第二轮仍无解 → 转人工，避免反复澄清卡死
+src/server/graph/
+├─ customer_service/
+│  ├─ state.py          # CustomerServiceState
+│  ├─ classifier.py     # 规则、多意图、注入检测
+│  ├─ llm_classifier.py # 可选 LLM 分类器
+│  ├─ adapters.py       # 延迟导入 RAG Core
+│  ├─ nodes.py          # 客服图节点
+│  ├─ graph.py          # 构图、条件边、订单熔断包装
+│  └─ agent.py          # 同步/异步 ask、thread_id 与 get_state
+├─ state/ / nodes/ / graph/ / agent/  # 兼容 RAG 图
+└─ quickstart_example.py             # mock 示例
 ```
 
-人工接管：会话进入 `handoff`/`manual` 后，坐席通过
-`POST /api/v1/conversations/{id}/messages/manual` 直接回复
-（`response_mode=manual`），不走 AI 检索/生成链路。
+客服 retriever：`(query, top_k=5) -> list[dict]`；generator：`(question, contexts, history) -> (answer, citations)`；分类器输出 `intent`、`intent_confidence`、`slots`，可附多意图与澄清信息。
 
-Checkpoint 生产持久化：客服图按 `thread_id=conversation_id` 编译进 LangGraph 原生
-checkpointer。配置 `MYSQL_HOST` 时用 `MysqlCheckpointSaver`（`services/checkpoint_saver.py`，
-落 `langgraph_checkpoints` / `langgraph_checkpoint_writes` 两张表，首用自动建表），
-澄清/转人工中间态跨进程重启可恢复；无 MySQL 时回退进程内 `InMemorySaver`。
-`intent`/`slots`/`needs_clarification` 作为跨轮恢复信号由 `classify_intent` 消费，
-`messages` 由 `add_messages` 跨轮累加，其余每轮字段由 `load_session` 重置。
+默认适配器调用 `server.core.retrieve.retrieve` 和 `server.core.generate.generate`，不导入外部 `rag` 包。当前 RAG generator 适配器接受 `history` 但不传给核心生成函数；checkpoint 保存历史不代表 LLM 已使用全部历史。
 
-意图分类器：默认用确定性规则（`classifier.classify_query`）。也可注入 LLM 分类器
-`llm_classifier.LLMIntentClassifier`（设 `LLM_CLASSIFIER=1` 启用），用 DeepSeek 输出
-`{intent, intent_confidence, slots}`，低置信度（<0.7）由 LLM 生成针对用户原话的追问；
-无 key / 调用失败 / 非法 JSON 时自动回退规则分类器，保证链路不中断。
+规则分类器默认开启；`LLM_CLASSIFIER=1` 时服务层尝试 LLM 分类，低置信度（<0.7）可追问，无 key、非法输出或调用失败回退规则。多意图按投诉 > 售后 > 订单 > 问候仲裁，规则层命中提示注入后标记 `security_flag`。规则与红队基线不能证明所有注入变体都被阻断。
 
-原始 RAG 图仍保留，用于兼容已有实验和 LangGraph Studio 调试。
+## Checkpoint
 
-```
- START → retrieve → rerank → generate → validate
-                                          │
-                    needs_revision? ──────┤ (回到 generate 重写，最多 2 次)
-                                          ↓
-                                       finalize → END
-```
+服务层创建 Agent 时调用 `build_checkpointer()`：MySQL 配置有效时使用 `MysqlCheckpointSaver`，否则内存 checkpointer。MySQL 表为 `langgraph_checkpoints` / `langgraph_checkpoint_writes`，`thread_id=conversation_id`。
 
-- **retrieve**：按 question 检索 top_k 上下文片段（FastEmbed + Qdrant）
-- **rerank**：二次排序，剔除无关片段
-- **generate**：基于上下文生成带 `[n]` 引用的答案（DeepSeek，OpenAI 兼容接口）
-- **validate_citations**：核验引用是否落在上下文中，幻觉引用触发重写
-- **finalize**：汇总 answer + citations 输出
+`messages` 使用 `add_messages` 累加，订单意图与槽位作为续轮信号；`load_session` 重置每轮输出。知识无素材澄清计数另存 `graph_checkpoints`，与 LangGraph 原生表不是同一机制。直接创建 Agent 未传 checkpointer 时不会保存跨轮状态。
 
-## 目录结构
+## 使用示例
 
-```
-langgraph/
-├── pyproject.toml          # uv workspace 子成员（根 members=["langgraph"]）
-├── langgraph.json          # LangGraph CLI 配置
-├── .env.example
-├── src/langgraph_graph/
-│   ├── state/              # RAGState 定义
-│   ├── nodes/              # retrieve / rerank / generate / validate
-│   ├── graph/              # build_rag_graph（图编排 + 条件边）
-│   ├── agent/              # RagAgent 封装
-│   ├── customer_service/   # 客服状态、意图路由、RAG 适配和人工接管
-│   └── __init__.py
-├── examples/quickstart.py  # 注入 mock 的可运行示例
-└── tests/                  # 单元测试
-```
-
-## 快速开始
+以下 shell 命令从 `server/` 执行，先按 [后端 README](README.md) 安装：
 
 ```bash
-# 依赖安装（根 workspace 已声明 langgraph 成员）
-cd /Users/zenquan/ZCodeProject/fastapi-app
-uv sync  # 或：uv pip install -e ./langgraph
-
-# 可独立运行示例（mock 检索/生成，无需真实 LLM）
-cd langgraph
-python examples/quickstart.py "什么是混合检索？"
-
-# 单元测试
-python -m pytest langgraph/tests
-
-# 客服 Agent 使用
-from langgraph_graph.customer_service import create_customer_service_agent
-
-agent = create_customer_service_agent()
-result = agent.ask("门店的经营模式是什么？", conversation_id="demo-1")
-print(result["final_answer"])
-
-# 原始 RAG Agent 使用
-from langgraph_graph.agent import create_agent
-agent = create_agent()
-result = agent.ask("什么是混合检索？")
-print(result["final_answer"])
+.venv/bin/python -m server.graph.quickstart_example '什么是混合检索？'
+.venv/bin/python -m pytest tests/test_graph_customer_service.py tests/test_checkpoint_resume.py tests/test_citation_rewrite.py tests/test_graph_rag.py
 ```
 
-## 接入真实 rag 核心
-
-`retrieve` / `rerank` 节点默认尝试导入 `rag` 包并调用其检索/重排函数；`generate` 默认读取 `DEEPSEEK_API_KEY` 走 DeepSeek。也可显式注入：
+无需外部模型的客服示例（Python）：
 
 ```python
-from rag import search, rerank
-agent = create_agent(retriever=search, reranker=rerank)
+from server.graph.customer_service import create_customer_service_agent
+
+agent = create_customer_service_agent(
+    retriever=lambda query, top_k=5: [{"doc": "demo.md", "seq": 0, "text": "本项目使用混合检索。"}],
+    generator=lambda question, contexts, history: ("本项目使用混合检索。[来源1]", [1]),
+)
+result = agent.ask("什么是混合检索？", conversation_id="demo-1", user_id="demo-user")
+print(result["final_answer"])
 ```
 
-## LangGraph CLI / LangSmith
+兼容 RAG 图：`START → retrieve → rerank → generate → validate → finalize → END`，非法引用可回到 generate；该图测试/示例使用 `[1]` 格式，客服与产品主链路使用 `[来源1]`。不要把兼容格式作为产品 API 的新约定。
 
-```bash
-# 本地启动 LangGraph Studio / server（需安装 langgraph-cli）
-langgraph dev --python 3.12
-```
-
-`langgraph.json` 同时暴露 `rag` 和 `customer_service` 两个图。配置 `.env` 中的 `LANGSMITH_TRACING` 即可接入链路追踪。
-配置 `.env` 中的 `LANGSMITH_TRACING` 即可接入链路追踪。
+没有配置 LangGraph Studio 启动文件或 CLI 依赖，因此不能直接按旧文档运行 `langgraph dev`。需要 Studio 时另行准备配置并验证。

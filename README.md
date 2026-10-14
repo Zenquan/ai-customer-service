@@ -1,241 +1,173 @@
 <p align="center">
-  <img src="logo.png" width="150" alt="assemble-platform logo" />
+  <img src="logo.png" width="150" alt="智应客服中心 logo" />
 </p>
 
-<h1 align="center">ai-service · AI 智能客服产品</h1>
+<h1 align="center">ai-customer-service · AI 智能客服产品</h1>
 
-<p align="center">
-  智能客服系统：文档知识库 + 混合检索问答 + LangGraph 客服编排（意图识别 / 澄清 / 转人工）+ 会话与文档云端持久化。
-  <br />
-  FastAPI · LangGraph · RAG  · React · Typescript · Ant Design X
-</p>
+文档知识库、可溯源问答、LangGraph 客服编排与人工坐席工作台。后端使用 FastAPI，前端使用 React、TypeScript 和 Ant Design X。
 
----
+> 校准日期：2026-10-14。能力描述以当前仓库代码为准；本次验证结果见 [文档校准记录](docs/documentation-audit.md)。当前仍包含演示账号和演示订单源。
 
-- **后端**：单一 `server` Python 包（src 布局）——FastAPI REST API + RAG Core + LangGraph 客服图 + MySQL 持久化
-- **前端**：Vite + React + TS + **Ant Design X**（Bubble/Sender/Sources）+ antd 知识库面板
-- **链路**：文件上传 → MinerU 解析 → 结构感知切块 → 向量化 → Qdrant → 混合检索 + rerank → DeepSeek 生成 → 引用校验
+## 产品能力
 
-## ✨ 产品功能
-
-| 模块 | 能力 | 前端入口 |
+| 模块 | 当前实现 | 页面入口 |
 | --- | --- | --- |
-| 📚 知识库管理 | 拖拽/点选上传（PDF/TXT/MD/DOCX/HTML/图片）、文档列表、chunk 数统计、单文档删除（增量不重建） | 左侧 `KnowledgePanel` |
-| 💬 知识问答 | 混合检索（关键词 + 向量 RRF 融合）→ bge-reranker 精排 → DeepSeek 生成 | 右侧 `ChatPanel`（Bubble.List + Sender） |
-| 🔗 引用溯源 | 回答强制 `[来源N]` 标记 + 程序校验越界引用；引用卡片可展开查看依据素材原文 | `AnswerView`（XMarkdown + Sources） |
-| 🧭 客服编排 | 三层路由：快速业务意图 → RAG 知识优先 → 检索无素材时澄清/转人工；多轮历史上下文；**多意图风险仲裁**（投诉>售后>订单>寒暄，混合诉求不再被「订单」抢先吞掉）| 后端 graph 层 + services 层 |
-| ✋ 人工接管 | AI 转人工后坐席可直接回复（`response_mode=manual`），会话进入 `manual` 状态，界面切换为人工模式 | ChatPanel + customer_service |
-| 🔐 登录认证 | demo JWT：`operator`（运营）与 `customer`（普通用户）双角色；客户消息身份取自 token，人工回复需运营角色 | auth 模块 + LoginPage/CustomerChat |
-| 🔎 只读业务工具 | 订单/物流查询走真实 LangGraph 工具节点：Pydantic 参数校验、归属校验、超时/失败显式转人工；缺单号多轮澄清（checkpoint 恢复） | 后端 tools 层 + graph 层 |
-| 💾 云端持久化 | 会话/消息落 MySQL（回退内存显性标注 `storage`）；文档切块存 MySQL，部署后自动重建向量索引 | 后端 services 层 |
-| 🛡️ 健壮性 | MinerU→markitdown→纯文本三级解析降级、云解析 sha256 缓存、LLM 超时重试、rerank 失败静默回退、空库友好回答 / 客服层无素材二次澄清后转人工 | 后端 core 层 |
-| 🔒 安全 | 上传防路径穿越（只取 basename）、扩展名白名单、密钥只存本地 `server/.env` / 云端环境变量（均不入库）；**PII 三层脱敏**（Prompt/指标/响应）；**限流 429 / 熔断 / 审计日志**（全 MySQL 实现，零 Redis 依赖） | 后端 ingest 路由 + services/middleware 层 |
-| 🎯 安全评测（红队） | `cs-redteam` 门禁对三类攻击语料断言「被阻断」：提示注入（`security_flag=prompt_injection` 归投诉转人工）、越权查单（归属校验 forbidden）、对抗样本（拆字/谐音/符号先归一化再匹配） | 后端 offline_eval + CLI |
+| 知识库 | 上传 PDF/TXT/MD/MARKDOWN/DOCX/HTML/JPG/PNG，列表、切块统计、单文档删除 | 工作台「知识库管理」弹窗 |
+| 知识问答 | 结构感知切块、向量与标题加权 BM25 双路召回、RRF、可选 rerank、来源引用 | 运营对话主区 / 客户聊天窗 |
+| 客服路由 | 投诉/售后/订单/问候分流；知识问题检索优先；资料不足追问，连续无解转人工 | 气泡链路标签 / 右侧上下文 |
+| 订单工具 | 演示订单/物流只读查询，参数与归属检查，缺单号澄清；查无此单先追问，连续两次失败转人工 | 客服图工具节点 |
+| 双端登录 | 演示 JWT，`operator` / `customer` 两种角色 | 登录页 |
+| 人工接管 | 客户人工会话只入队；坐席回复以登录身份记录，双端轮询同步 | 工作台人工回复区 |
+| 坐席分配 | 多坐席账号、领取/释放、转人工自动指派、会话归属字段 | 侧栏「全部 / 我的 / 待分配」 |
+| 存储 | 会话/消息与 checkpoint 可使用 MySQL，失败回退内存；文档切块可同步 MySQL用于空索引恢复 | API `storage` / 服务日志 |
+| 可靠性 | 解析降级、解析缓存、LLM 超时重试、订单熔断、消息限流、审计与脱敏 | 后端服务层 |
+| 评测 | 客服任务与红队离线门禁、运营性能摘要、Prometheus 和告警配置 | 「性能」/「告警」弹窗 |
 
-## 🏗️ 系统架构
+引用校验检查的是来源序号范围，不能单独证明答案事实正确。JWT 当前只保护部分接口；知识库和会话读取未实现完整资源权限或租户隔离。监控的 MySQL 聚合限制见 [架构文档](docs/architecture.md)。
 
-```
-┌────────────────────────── 浏览器（Vite dev :5173）──────────────────────────┐
-│  web/  React + TS + Ant Design X                                            │
-│  ┌────────────────┐        ┌────────────────────────────────────────────┐    │
-│  │ KnowledgePanel │        │ ConversationSidebar（真实会话列表）          │    │
-│  │ Upload/Docs    │        │ ChatPanel：Bubble.List + AnswerView         │    │
-│  └───────┬────────┘        └─────────────────────┬──────────────────────┘    │
-│          │  fetch（Vite proxy /api → 127.0.0.1:8000）                         │
-└──────────┼──────────────────────────────────────┼────────────────────────────┘
-           ▼                                       ▼
-┌─────────────────── server 包（uvicorn :8000，--workers 1）──────────────────┐
-│  server/main.py：应用工厂（CORS + 路由 + lifespan 云存储重建）                 │
-│  server/api/：health · docs · ingest · ask · conversations                  │
-│  server/auth/：demo 账号 + JWT 签发/校验 + operator/customer 角色依赖       │
-│  server/services/：rag 融合层 · customer_service · chat_store · doc_store · 限流/熔断/审计/脱敏 │
-│  server/tools/：只读业务工具（订单/物流查询 + ToolResult 统一返回）           │
-│  server/graph/：LangGraph 图（rag 图 + customer_service 图，依赖注入）        │
-│  server/core/：RAG 核心（解析→切块→向量→检索→rerank→生成→引用校验）           │
-└───────────────────────────────┬──────────────────────────────────────────────┘
-                                ▼
-        Qdrant local（server/qdrant_data）    MySQL（会话/文档切块，公网直连）
-        远程 embeddings（EMBED_BASE_URL）      DeepSeek（LLM）+ 硅基流动（rerank）
-```
+## 快速开始
 
-**两条主链路**
-
-- **入库**：上传文件 → 落盘 `server/data/uploads/` → 解析（MinerU 云 → markitdown → 纯文本兜底，带内容 sha256 缓存）→ 清洗 → 按标题层级和段落边界聚合（`chunk_size` 仅为目标，不硬切段落）→ 向量化 → Qdrant upsert → 切块同步存 MySQL（部署后自动重建）
-- **问答**：query 向量化 → 向量与标题加权 BM25 双路候选 → RRF 融合 → rerank 精排/阈值过滤 → 编号素材注入 Prompt → DeepSeek 生成（强制 `[来源N]`）→ 引用校验
-
-## 🚀 快速开始
-
-登录（demo 账号，密码可用 `AUTH_*` 环境变量覆盖）：
-
-| 角色 | 账号 | 默认密码 |
-| --- | --- | --- |
-| 运营 Zenquan | `zenquan` | `zenquan123` |
-| 普通用户 Alice | `alice` | `alice123` |
-
-运营账号进入客服工作台；普通用户账号进入客户聊天窗，可端到端验证“提问 → AI → 转人工 → 运营回复”。
+从仓库根目录准备环境（Python 3.12、Node.js 22 或满足前端依赖要求的更新版本、pnpm；Docker/CI 使用 pnpm 11.7.0）：
 
 ```bash
-# 一键启动（后端 :8000 + 前端 :5173）
-./scripts/start.sh
-
-# 或手动两个终端
-# 1. 后端（Python 3.12，见「为什么锁 3.12」）
+# 后端：dev 是依赖组，local 是可选 extra
 cd server
-.venv/bin/python -m uvicorn server.main:app --reload --port 8000 --workers 1
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -e '.[local]' --group dev
+cp .env.example .env
+cd ..
 
-# 2. 前端（Vite dev proxy: /api → 127.0.0.1:8000）
-cd web
-pnpm install      # 首次
-pnpm dev          # http://localhost:5173
-```
-
-打开 http://localhost:5173：左侧上传 PDF/MD → 入库自动切片；右侧提问，回答带 [来源N] 引用卡片，可展开查看依据素材。
-
-> **环境准备**：
-> - 后端 venv：`cd server && uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[local]" --group dev`
-> - 密钥配置：`cp server/.env.example server/.env`，必填 `DEEPSEEK_API_KEY`；PDF 解析建议填 `MINERU_TOKEN`，精排填 `SILICONFLOW_API_KEY`
-> - 会话持久化（可选）：`cp .env.local.example .env.local` 并填写 MySQL 连接信息——本地与线上共享同一份会话数据；不配则回退内存存储
-
-## 🐍 为什么锁 Python 3.12
-
-**全项目统一使用 Python 3.12**（`pyproject.toml` / `server/pyproject.toml` / `.python-version` / `Dockerfile` 已对齐，均为 3.12）。
-
-**原因：本地向量推理依赖 `fastembed`，而 `fastembed` 的推理引擎 `onnxruntime` 在 3.13/3.14 下没有 macOS x86_64 的预编译 wheel。**
-
-| 依赖 | Python 3.13 / 3.14 支持 | 说明 |
-|------|------------------------|------|
-| `langgraph` | ✅ 支持 | `requires-python = ">=3.10"`，无上限，3.14 实测可装可跑 |
-| `fastembed` 本体 | ✅ 支持 | 纯 Python wheel，不拦新版本 |
-| **`onnxruntime`** | ❌ **不支持** | macOS x86_64 下无 cp313/cp314 wheel（cp314 目前仅 Windows/Linux） |
-
-**影响与决策：**
-- **云端镜像不需要本地向量推理**：部署时 embedding 走远程 `/embeddings`（`EMBED_BASE_URL`），`fastembed` 是 `[local]` 可选依赖、不进镜像——因此云端其实不受 3.12 限制；锁 3.12 是为了本地开发（本地向量化）与容器行为一致。
-- 若未来本地也切远程 embedding（不再用 fastembed），可整体放宽到 3.13/3.14。
-
-## 📂 目录结构
-
-```
-ai-service/
-├── server/                      # 后端单一 Python 包（依赖唯一来源）
-│   ├── pyproject.toml           # 依赖声明：核心 + [local]（fastembed）+ dev 组
-│   ├── src/server/
-│   │   ├── main.py              # FastAPI 应用工厂（uvicorn server.main:app）
-│   │   ├── api/                 # REST 路由：health/docs/ingest/ask/conversations
-│   │   ├── services/            # rag 融合层 / customer_service / chat_store / doc_store
-│   │   ├── tools/               # 只读业务工具：订单/物流查询 + ToolResult 统一返回
-│   │   ├── graph/               # LangGraph 图：rag 图 + customer_service 图（依赖注入）
-│   │   ├── core/                # RAG 核心：chunker/embed_store/retrieve/generate/ingest/citations/config
-│   │   └── cli.py               # CLI：python -m server.cli ingest/ask/run/eval/doc-list/doc-delete
-│   ├── tests/                   # 全量单测（core 纯函数 + 图契约 + API 接口）
-│   ├── data/                    # uploads/（前端上传）、docs/、_parse_cache/、评测标注集（cs_eval_cases/cs_redteam_cases）
-│   ├── qdrant_data/             # Qdrant local 向量索引
-│   └── .env / .env.example      # 密钥配置（不入库）
-├── web/                         # 前端（Vite + React + TS + Ant Design X）
-│   ├── src/lib/                 # api.ts 客户端 + chat-provider.ts（DefaultChatProvider 透传）
-│   ├── src/components/          # 会话侧栏 / ChatPanel / 上下文 / KnowledgePanel
-│   └── vite.config.ts           # dev proxy /api → 127.0.0.1:8000
-├── scripts/start.sh                # 一键启动前后端
-├── Dockerfile                      # 单容器部署镜像（镜像内构建前端，密钥由环境变量注入）
-└── docs/                        # 架构与 API 文档
-    ├── architecture.md          # 分层 / 数据流 / 关键设计决策
-    ├── customer-service-plan.md # 客服系统演进规划（Phase 路线）
-    └── api.md                   # API 参考：请求/响应/错误/curl 示例
-```
-
-## 📄 文档导航
-
-| 文档 | 适合谁 | 内容 |
-| --- | --- | --- |
-| [server/README.md](server/README.md) | 后端开发 | server 包结构、开发/测试/部署说明 |
-| [server/README-rag.md](server/README-rag.md) | RAG 原理 | 核心链路、踩坑实录、优化记录 P0/P1 |
-| [server/README-graph.md](server/README-graph.md) | 图编排 | LangGraph 图约定与关键踩坑 |
-| [docs/architecture.md](docs/architecture.md) | 接手 | 分层架构、端到端时序、关键设计决策及取舍 |
-| [docs/api.md](docs/api.md) | 联调/二次开发 | API 端点完整参考：请求/响应/错误/curl 实测 |
-| [docs/customer-service-plan.md](docs/customer-service-plan.md) | 规划 | 智能客服系统 Phase 路线、版本里程碑（v0.1–v0.4）、验收标准与剩余迭代 |
-| [web/README.md](web/README.md) | 前端开发 | 前端技术栈、目录语义、chat-provider 原理、构建注意 |
-
-## 🧠 亮点
-
-1. **单一后端包 + src 布局**：rag/langgraph/api 三层合并为 `server` 包，正规 `from server.core.retrieve import retrieve` 导入（无 sys.path hack、无模块名碰撞），依赖单一来源 `server/pyproject.toml`
-2. **编排与检索解耦**：LangGraph 图全部依赖注入（retriever/generator/classifier 参数化），契约测试不碰向量库与模型
-3. **优雅降级 + 显性暴露**：LangGraph 不可用回退 RAG 直答；MySQL 不可用回退内存并在响应体带 `storage` 字段；空库时友好回答而非报错
-4. **只读工具闭环**：订单/物流查询走 LangGraph 工具节点，Pydantic 入参校验 + 会话归属校验，非本人/失败显式转人工且不改写结果；缺单号由原生 checkpoint 多轮澄清补齐（MySQL 持久化，重启可恢复）
-5. **可替换意图分类器 + 安全防线**：规则/LLM 分类器同契约（`{intent, intent_confidence, slots}`），LLM 低置信度自适应追问、失败自动回退规则；规则层支持多意图风险仲裁（投诉>售后>订单>寒暄）、提示注入检测（`security_flag`）与对抗样本归一化（拆字/混淆符号不绕过）；`LLM_CLASSIFIER=1` 一键切换
-6. **云端持久化双保险**：会话消息落 MySQL；文档切块同步存 MySQL，服务启动 lifespan 自动重建向量索引——重新部署不丢数据
-7. **Qdrant local 免 Docker**：与生产远端同 API；单进程锁用 `threading.Lock` + `--workers 1`
-8. **混合检索 RRF**：标题加权 BM25（中文 2-gram + 英文词）与语义向量双路召回 → 排名倒数融合
-9. **结构感知切块**：标题路径和段落边界进入 chunk 元数据、embedding 上下文与 Prompt，超长段落保持完整
-10. **防幻觉闭环**：生成强制 `[来源N]` → 程序校验越界 → 前端「引用校验通过/含越界引用」徽标 + 素材原文展开
-
-## ✅ 测试与验证现状
-
-- **统一入口（推荐）**：`cd server && .venv/bin/python -m pytest` → 全量用例全绿
-  - core 纯函数：清洗/切块/引用/混合检索 + 解析降级链与缓存 + ask 错误分支/evaluate 命中率/Prompt 组装
-  - graph 图契约：知识问答 / 澄清 / 转人工 / 引用校验重写循环（注入 mock，零外部依赖）
-  - 存储层：MySQL 选择 / 内存回退 / 会话列表
-  - 接口层：FastAPI TestClient，打桩服务层（health/docs/ingest 白名单与防穿越/ask 参数与错误透传/会话 API）
-  - 评测与告警：指标埋点 / Prometheus 暴露聚合 / 告警阈值判定（转人工率/出错率/无依据承诺率）
-  - 安全脱敏：手机号/身份证/邮箱/银行卡/订单号 PII 脱敏（Prompt/指标/响应三层）
-  - 多意图与安全：`detect_intents` 风险优先级仲裁、提示注入检测（`_INJECTION_PATTERNS`）、对抗样本归一化、红队评测 `evaluate_redteam`（`test_multi_intent.py`/`test_redteam.py`）
-  - 可靠性组件：限流（固定窗口原子计数）/ 熔断（closed/open/half-open 状态机）/ 审计日志（trace_id 关联）（`test_rate_limit.py`/`test_circuit_breaker.py`/`test_audit_log.py`）
-- **端到端实测**：health ✓ / 上传入库 ✓ / 文档列表与删除 ✓ / ask（"什么是 AI Agent？"）回答 + 引用校验 ✓ / 会话消息 storage=mysql 落库 ✓ / 部署重启后向量索引自动重建 ✓
-- **前端**：`tsc --noEmit` 类型检查通过；`vite build` 可出产物
-
-## 📊 评测与监控（客服任务评测体系）
-
-- **指标埋点**：每轮对话结束记录 `evaluation_events`（意图/响应模式/引用校验/转人工/追问/工具状态/时延），MySQL 持久化 + 内存回退。
-- **指标暴露**：`GET /metrics` 输出 Prometheus 文本（前缀 `cs_eval_`），官方 `prometheus_client` 库，覆盖一次解决率、转人工率、工具成功率、无依据承诺率、响应时延 P50/P95。
-- **告警**：转人工率 / 出错率 / 无依据承诺率 三项滑动窗口阈值判定，命中落 `evaluation_alerts` 表 + 可选 webhook 推送（`ALERT_WEBHOOK_URL`）；运营端「告警」入口查看近期告警。
-- **监控配置**：`deploy/grafana/dashboard.json`（面板）+ `deploy/prometheus/alerts.yml` + `prometheus.yml`（抓取 + 告警规则），导入 Grafana 即可。
-- **阈值可配**：`ALERT_HANDOFF_RATE` / `ALERT_ERROR_RATE` / `ALERT_UNFOUNDED_RATE` / `ALERT_MIN_SAMPLES`（详见 `.env.local.example`）。
-- **离线评测集**：`python -m server.cli cs-eval` 用 mock 工具跑客服图，回归验证意图识别/工具调用/转人工判断/越权拦截/槽位收集五项任务级正确性；默认标注集 `server/data/cs_eval_cases.json`（57 条真实语料含边界/长尾与 10 条检索标注，`--cases` 指定自定义 JSON）；`--fail-under 0.9` 阈值门禁 + `--json` 报告，已接入 GitHub Actions CI（`.github/workflows/ci.yml`）。`--with-retrieval` 对带 `relevant_docs`/`relevant_keywords` 标注的知识问答样例联动跑 Recall@K/MRR（需真实向量库），实测 Recall@1/3/5=1.0、MRR=1.0。
-- **红队安全评测**：`python -m server.cli cs-redteam` 对三类攻击语料 `server/data/cs_redteam_cases.json`（提示注入 6 / 越权 2 / 对抗样本 5）逐题断言「被阻断/不泄露」，聚合 `redteam_block_rate`（安全阻断率，实测 1.0）作 CI 门禁；攻击手法随迭代持续扩充。
-
-## 🔍 日志与链路排查（trace_id）
-
-- 每个 HTTP 请求响应头都会带 `X-Request-ID`（调用方可自定义请求头透传，未传则由服务端生成），
-  SSE 流式请求全程使用同一个 ID。
-- 服务端业务日志（INFO 起）统一输出到 stdout，**每行自动带当前请求的 trace_id**，
-  格式如 `2026-09-06 15:42:00 INFO [a1b2c3...] server.services.customer_service: 客服消息收到 ...`，
-  中文不乱码、不再“哑火”。
-- 从日志中按 trace_id 即可串起一轮对话的「消息进入 → 混合检索 → LLM 生成 → 回答落库 / 转人工」；
-  启动重建、CLI 等无请求场景的 trace_id 显示为 `-`。
-- 级别默认 INFO，可用环境变量 `LOG_LEVEL=DEBUG`（或 `WARNING`）调整。
-
-## 🛠️ 常用命令
-
-```bash
-# 全量测试（server/pyproject.toml 已配 pythonpath=["src"]）
-cd server && .venv/bin/python -m pytest
-
-# RAG CLI（不经 API 直接跑核心）
-cd server
-.venv/bin/python -m server.cli ingest data/docs      # 入库
-.venv/bin/python -m server.cli ask "什么是 AI Agent？"
-.venv/bin/python -m server.cli eval                   # 离线 Recall@K / MRR
-.venv/bin/python -m server.cli cs-eval                # 客服任务离线评测（意图/工具/转人工/越权/槽位）
-.venv/bin/python -m server.cli cs-eval --fail-under 0.9   # 阈值门禁（CI 用，未达标退出码 1）
-.venv/bin/python -m server.cli cs-eval --json              # 输出 JSON 报告（含逐题明细）
-.venv/bin/python -m server.cli cs-eval --with-retrieval    # 联动检索评测 Recall@K/MRR（需向量库）
-.venv/bin/python -m server.cli cs-redteam --fail-under 0.9 # 红队安全评测门禁（注入/越权/对抗样本，CI 用）
-.venv/bin/python -m server.cli doc-list               # 列出库内文档
+# 可选 MySQL / 账号 / 告警配置
+cp .env.local.example .env.local
 
 # 前端
-cd web && pnpm lint && pnpm build
+cd web
+pnpm install --frozen-lockfile
+cd ..
 
-# 部署（CloudBase 云托管 · Git 仓库自动触发）
-# 控制台：绑定 GitHub 仓库 → 服务选择 master 分支并开启自动部署 → Dockerfile 选仓库根目录 Dockerfile
-# 密钥与数据库连接（DEEPSEEK_API_KEY / MYSQL_* / EMBED_* 等）在云托管环境变量中配置，不写入镜像
+# 前后端一起启动（:8000 + :5173）
+./scripts/start.sh
 ```
 
-## 🗺️ 迭代路线（Roadmap）
+编辑 `server/.env`，填写 `DEEPSEEK_API_KEY`；`MINERU_TOKEN` 和 `SILICONFLOW_API_KEY` 按解析/精排需要配置。本地不配 `EMBED_BASE_URL` 时需要 `[local]` 的 FastEmbed；使用远程向量服务时可安装 `-e . --group dev`，配置远程地址、模型和 key。当前向量维度固定为 1024，模型须匹配。
 
-> 当前进度：Phase 0 → Phase 2 安全/正确性（P0）已全部收口，GitHub Actions CI 全绿（红队安全评测门禁 `cs-redteam` 已纳入）。完整规划见 [docs/customer-service-plan.md](docs/customer-service-plan.md) §14「版本里程碑总览」。
+MySQL 配置同时设置 `MYSQL_DB` 和 `MYSQL_DATABASE` 为同一个数据库名：会话/文档/checkpoint 读取前者，指标/告警读取后者。根目录 `.env.local` 由 `scripts/start.sh` 加载；手动启动不会自动读取它。
 
-| 版本 | 范围 | 状态 |
-| --- | --- | --- |
-| **v0.1** | Phase 0–1 客服 MVP：三层路由、订单/售后/投诉安全分流、SSE、人工接管、MySQL 持久化、checkpoint 恢复 | ✅ 已交付 |
-| **v0.2** | Phase 2 生产化与安全（P0 收口）：JWT、评测体系、PII 脱敏、多意图识别、限流/熔断/审计（MySQL）、红队评测 | ✅ 已交付 |
-| **v0.3** | P1 业务真实化：真实订单/物流只读接口、JWT/OAuth 生产化、MySQL 表扩展 | ⬜ 下一步 |
-| **v0.4** | Phase 3 业务闭环：受控写操作、售后流程 + 工单、坐席工作台增强 | ⬜ 待启动 |
-| **持续** | 红队语料与防线演进（谐音/编码/多轮注入、LLM 注入检测） | 🔁 已入 CI |
+手动启动的两个终端均从仓库根目录开始：
+
+```bash
+# 终端 1：先导出根目录配置，再切到 server/
+set -a
+source .env.local
+set +a
+cd server
+.venv/bin/python -m uvicorn server.main:app --reload --host 127.0.0.1 --port 8000 --workers 1
+```
+
+```bash
+# 终端 2
+cd web
+pnpm dev
+```
+
+打开 `http://localhost:5173`，登录后上传资料并提问。接口文档在 `http://127.0.0.1:8000/docs`。
+
+| 角色 | 演示账号 | 默认密码 | 用户 ID |
+| --- | --- | --- | --- |
+| 运营 | `zenquan` | `zenquan123` | `zenquan` |
+| 客户 | `alice` | `alice123` | `demo-user` |
+
+可通过 `AUTH_*` 环境变量覆盖密码和账号。`AUTH_OPERATORS` 注入额外坐席，详见 [坐席分配文档](docs/agent-assignment-plan.md)。修改配置后重启后端。
+
+演示订单 `A00001` 属于 `demo-user`，Alice 登录后可查；`B00001` 属于 `alice` 这个用户 ID，和登录名为 Alice 的 `demo-user` 不同，用于验证越权拒绝。
+
+启动脚本允许 `BACKEND_PORT` / `FRONTEND_PORT` 覆盖端口，但 Vite 代理固定指向 `127.0.0.1:8000`，CORS 也只列出 5173/4173；改端口时须同步修改对应配置。`pnpm preview` 没有开发代理，要联调请使用开发服务器或同域容器。
+
+## Python 与依赖约束
+
+`.python-version` 和 Docker 使用 Python 3.12；两个 `pyproject.toml` 声明的兼容范围实际是 `>=3.10,<3.13`。项目统一用 3.12 开发与验证。本地 FastEmbed/ONNX Runtime 的历史兼容问题是选择该版本的原因，不据此断言所有新版本和平台都不支持。
+
+后端依赖的唯一声明位置是 `server/pyproject.toml`，`langgraph>=0.2.60,<1.0`、`langchain-core>=0.3.0,<0.4.0`；`local` extra 安装 FastEmbed，`dev` 依赖组安装 pytest。仓库没有跟踪 `uv.lock`，安装结果受依赖范围与包源影响。
+
+## 架构与目录
+
+```text
+web/ React + Ant Design X
+  ├─ lib/api.ts：JSON API + Bearer token
+  └─ lib/chat-provider.ts：客服 SSE / 兼容非流式 ask
+                ↓ /api/v1（开发经 Vite 代理）
+server/src/server/
+  ├─ main.py：路由、中间件、lifespan、静态前端
+  ├─ api/：HTTP 契约、登录与坐席角色依赖
+  ├─ auth/：演示账号、JWT、角色解析
+  ├─ services/：客服路由、RAG 融合、存储、指标/告警/可靠性
+  ├─ graph/：客服图 + 兼容 RAG 图
+  ├─ tools/：演示订单/物流只读工具
+  ├─ core/：解析、切块、向量、检索、生成、引用校验
+  └─ cli.py：python -m server.cli
+```
+
+运行数据默认以 `server/` 为根：`data/uploads/`、`data/_parse_cache/`、`qdrant_data/`；可通过 `SERVER_HOME` 指定根目录。必须从 `server/` 启动或设置正确的 `SERVER_HOME`。Qdrant local 同一目录只允许一个进程：API 服务与 CLI 不能同时占用本地索引。
+
+入库：上传 → 解析（MinerU / markitdown / 文本降级）→ 清洗与结构切块 → 向量化 → Qdrant → 可选 MySQL 文档备份。
+
+问答：问题向量与 BM25 → RRF → 可选精排/阈值过滤 → 编号素材 → LLM → 引用范围校验。同步客服通常走图；流式客服的知识分支由服务层直接调用 RAG，业务与澄清分支走客服图。
+
+## 文档导航
+
+| 文档 | 内容 |
+| --- | --- |
+| [server/README.md](server/README.md) | 后端安装、配置、测试与部署 |
+| [server/README-rag.md](server/README-rag.md) | RAG API、CLI、默认参数与数据边界 |
+| [server/README-graph.md](server/README-graph.md) | 图结构、依赖注入、checkpoint 与引用约定 |
+| [web/README.md](web/README.md) | 双端页面、SSE Provider、开发与构建 |
+| [docs/architecture.md](docs/architecture.md) | 分层、数据模型、存储与可靠性边界 |
+| [docs/api.md](docs/api.md) | 全部业务端点、鉴权、错误、SSE 与 curl 示例 |
+| [docs/agent-assignment-plan.md](docs/agent-assignment-plan.md) | 已实现坐席分配与剩余工作 |
+| [docs/customer-service-plan.md](docs/customer-service-plan.md) | 当前能力、后续规划与验收标准 |
+| [docs/documentation-audit.md](docs/documentation-audit.md) | 本次文档范围、验证结果和已知差距 |
+
+`server/data/docs/` 的两份 Markdown 是知识库演示素材，更新文件不会自动更新已入库向量。
+
+## 测试、评测与诊断
+
+```bash
+# 从仓库根目录：全量后端测试
+server/.venv/bin/python -m pytest
+
+# 以下从 server/ 执行（完成 editable 安装后）
+cd server
+.venv/bin/python -m server.cli --help
+.venv/bin/python -m server.cli cs-eval --fail-under 0.9
+.venv/bin/python -m server.cli cs-redteam --fail-under 0.9
+.venv/bin/python -m server.cli cs-eval --json
+.venv/bin/python -m server.graph.quickstart_example '什么是混合检索？'
+```
+
+真实检索评测与文档操作也从 `server/` 执行，先停止占用本地索引的 API 服务：
+
+```bash
+.venv/bin/python -m server.cli ingest data/docs
+.venv/bin/python -m server.cli ask '什么是 AI Agent？'
+.venv/bin/python -m server.cli eval
+.venv/bin/python -m server.cli cs-eval --with-retrieval
+.venv/bin/python -m server.cli doc-list
+```
+
+CLI 的 `ingest` 走 `server.core.main`，不会同步 MySQL 文档备份；需要备份时使用上传 API 或服务层 `rag.ingest_dir`。
+
+前端验证从 `web/` 执行：`pnpm lint`、`pnpm build`。CI 当前执行客服/红队门禁、选定的后端测试和前端应用类型检查，并未覆盖后端全部测试、前端 lint/build。
+
+每个请求响应携带 `X-Request-ID`，业务日志输出 stdout 并带 trace_id；无请求场景显示 `-`。默认 `LOG_LEVEL=INFO`。指标出口：`/metrics`（Prometheus）与 `/api/v1/metrics/summary`（运营 JSON）；配置在 `deploy/prometheus/` 与 `deploy/grafana/`。JSON 摘要支持 MySQL，Prometheus 与应用内告警目前依赖内存事件，详见架构文档。
+
+## 单容器部署
+
+根目录 `Dockerfile` 在镜像内构建前端，运行阶段安装 `server` 包并托管 `web/dist`；Python 3.12、默认 `PORT=80`、单 worker、健康检查 `/api/v1/health`。密钥与 MySQL/向量服务配置由平台环境变量注入。
+
+容器不安装 FastEmbed，须配置 `EMBED_BASE_URL` 与有效 key；MySQL 文档备份成功且 Qdrant 集合为空时，启动会尝试恢复索引。恢复失败只记日志，不能据此承诺重部署永不丢数据。外部 Qdrant 用 `QDRANT_URL` / `QDRANT_API_KEY` 配置，切远端本身不保证其它组件适合多 worker。
+
+CloudBase 的分支绑定、自动部署和线上状态由平台控制台决定，仓库无法证明它们已启用；本次未部署。
+
+## 后续迭代
+
+已具备客服 MVP、演示认证、评测与基础坐席工作台。下一阶段先补齐资源鉴权、真实业务源、监控聚合、坐席并发边界与生产账号体系，再推进受控写操作、工单和在线坐席路由。详细状态见 [规划文档](docs/customer-service-plan.md)。

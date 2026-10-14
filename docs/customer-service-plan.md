@@ -1,537 +1,147 @@
-# 智能客服系统规划
+# 智能客服系统：能力校准与演进规划
 
-## 1. 目标与原则
+> 校准日期：2026-10-14。本文区分已实现、已有代码但仍有差距、尚未实现。旧 v0.1–v0.4 仅是规划标签；后端包/API 版本为 1.0.0、前端包为 0.0.0，不能把规划标签当发布证明。
 
-### 1.1 产品目标
+## 目标与原则
 
-在现有知识库问答基础上，演进为可处理多轮对话、业务查询、业务办理和人工转接的智能客服系统。
+在知识问答基础上处理多轮业务查询和人工转接：回答可追溯，工具受参数与权限约束，失败进入明确澄清/人工分支。先稳定单 Agent 与评测，再按业务需要扩展。
 
-第一阶段优先解决三件事：
+RAG 领域能力在 `server.core`，客服编排在 `server.graph.customer_service`，业务融合与持久化在 `server.services`。工具通过显式接口调用，不能由模型随意拼接内部请求。
 
-- 回答有依据：继续使用结构感知分块、混合检索、重排和引用校验。
-- 处理有边界：涉及订单、退款、账户等操作时，必须经过身份、权限和风险校验。
-- 失败可接管：资料不足、工具失败、用户不满意或高风险场景，明确转人工。
+## 当前能力清单
 
-### 1.2 设计原则
-
-- `rag/` 是独立领域能力，负责知识库、检索、重排和离线评测。
-- `LangGraph` 是客服流程编排层，负责状态、路由、循环、重试和人工介入。
-- `LangChain` 只作为模型、消息、Prompt、Tool 等适配接口，按需使用，不重写现有 RAG。
-- 所有业务工具都通过显式接口调用，不允许模型直接拼接内部 API 请求。
-- 先做可观测、可评测的单 Agent，再扩展多 Agent。
-
-## 2. 当前基础与缺口
-
-### 当前落地状态
-
-客服能力已与 RAG 合并为单一 `server` 包（`from server.core.retrieve import retrieve`），Phase 1 MVP 主链路已跑通：
-
-- 单一 `server` 包 + src 布局：`api` / `services` / `tools` / `graph` / `core` 分层，`rag` / `langgraph` / API 三层合一，无 sys.path hack、无模块名碰撞。
-- `CustomerServiceState` 固化会话、意图、槽位、检索上下文、引用和人工接管字段；确定性分类器覆盖问候、知识问答、订单、售后、投诉、未知，后续可替换为 LLM 分类器。
-- LangGraph 图串起会话初始化、意图路由、RAG 检索、回答生成、引用校验、澄清与转人工；节点依赖注入（retriever/generator 参数化），契约测试零外部依赖。
-- 三层路由：快速业务意图 → RAG 知识优先 → 无素材澄清；连续两轮无解转人工；页面气泡「当前链路」标签 + 右侧路由高亮同步。
-- 只读订单/物流工具闭环：Pydantic 参数校验、会话归属校验、超时/失败显式转人工，缺单号多轮澄清（checkpoint 恢复）。
-- SSE 流式回复：知识问答逐 token；业务/澄清/转人工走图 meta 事件，前端打字机呈现。
-- 人工接管闭环：转人工后坐席直接回复（`response_mode=manual`），会话进入 `manual` 状态，客户/运营双端轮询同步。
-- 演示认证：`operator` / `customer` 双角色 JWT，接口按角色鉴权；客户消息身份取自 token，人工回复需运营角色。
-- 云端持久化：会话/消息落 MySQL（回退内存并在响应体显性标注 `storage`）；文档切块同步存 MySQL，服务启动 lifespan 自动重建向量索引——重新部署不丢数据。
-- 可观测：请求级 `trace_id` 贯穿「消息进入 → 检索 → 生成 → 落库/转人工」，统一日志输出 stdout。
-- 前端双端页面：运营客服工作台（会话队列 / 对话主区 / 实时上下文 / 人工接管分栏）+ 客户聊天窗（快捷提问引导 / 流式回答 / 人工回复可见）。
-- LangGraph checkpoint 生产持久化：MySQL 后端 checkpointer（`checkpoint_saver.py`），按 `thread_id=conversation_id` 存图状态，重启恢复澄清/转人工中间态。
-- 客服任务评测体系 + PII 脱敏：离线评测（`cs-eval` 任务门禁 + Recall@K/MRR 检索联动）+ 在线埋点（evaluation_events）/ Prometheus（`/metrics`）+ 告警 + 三层脱敏；LLM 意图分类器可插拔替换（默认关闭）。
-- 限流、熔断与审计日志（MySQL 实现）：`rate_limit.py` 固定窗口原子计数 + `RateLimitMiddleware` 429；`circuit_breaker.py` closed/open/half-open 状态机包裹订单工具；`audit_log.py` 全链路审计落库（trace_id 关联 + PII 脱敏）。三者均无 MySQL 时回退内存，不依赖 Redis。
-- 安全评测（红队）：`cs-redteam` 门禁对三类攻击语料（`cs_redteam_cases.json`，提示注入/越权/对抗样本）跑图断言「攻击被阻断」——注入命中归 complaint 并打 `security_flag`（`_INJECTION_PATTERNS` + `_detect_injection`），对抗样本先归一化再匹配关键词（`_normalize_query` 去空白/混淆符号），越权靠订单归属校验兜底；聚合 `redteam_block_rate`（安全阻断率）作 CI 门禁。分类器注入检测的命中率经 `classify_query` 验证为全量阻断。
-
-FastAPI 会话服务优先加载 LangGraph Agent；缺依赖或运行失败时自动回退 RAG 直答。真实业务只读接口替换演示订单源、生产级 JWT/OAuth 与多租户留在后续迭代（限流/熔断/审计已用 MySQL 落地，不依赖 Redis）。
-
-### 已具备
-
-- FastAPI REST 接口和 React 对话界面。
-- 文档解析、结构感知切块、Qdrant 存储。
-- 向量 + BM25 + RRF 混合检索，可选 rerank、引用校验和 Recall@K/MRR 离线评测。
-- LangGraph 图（rag 图 + 客服图）已并入 `server` 包，具备 retrieve、rerank、generate、validate、clarify、handoff 节点。
-- 客服任务评测：一次解决率、转人工率、工具调用成功率、无依据承诺率等指标已体系化（离线评测 + 在线埋点 + Prometheus + 告警）。
-
-### 需要补齐
-
-- 真实业务只读接口替换演示订单源；写操作（退款/改址/取消）尚未开放。
-- JWT/OAuth 生产化：真实验证码、密码重置、令牌刷新、多租户隔离。
-- 意图识别默认仍是确定性规则（LLM 分类器已实现但默认关闭，需 `LLM_CLASSIFIER=1` 启用；规则分类器已支持多意图风险优先级仲裁 + 提示注入检测）。
-- 红队语料待随攻击手法演进持续扩充（当前 13 条覆盖注入/越权/对抗三类基线，拆字谐音等变体可加）。
-
-## 3. MVP 范围
-
-### 3.1 首批场景
-
-建议先选择一个业务域，不要一开始覆盖所有客服问题：
-
-1. 知识问答：产品说明、政策、流程、常见问题。
-2. 订单查询：查询订单状态、物流状态和预计送达时间。
-3. 售后咨询：判断是否需要补充信息，给出退款/换货流程。
-4. 人工转接：资料不足、工具异常、投诉升级和高风险操作转人工。
-
-### 3.2 暂不做
-
-- 自动退款、自动改地址等不可逆操作。
-- 多 Agent 协同。
-- 全量历史会话长期记忆。
-- 复杂营销推荐和主动外呼。
-
-## 4. 推荐架构
-
-### 4.1 系统分层图
-
-```mermaid
-flowchart TB
-    UI["React 客服工作台"] --> API["FastAPI API 层"]
-    API --> CS["Customer Service Service"]
-    CS --> GRAPH["LangGraph 客服流程图"]
-
-    GRAPH --> SESSION["会话状态与 Checkpoint"]
-    GRAPH --> RAG["RAG Core\n结构切块 / 混合检索 / RRF / Rerank"]
-    GRAPH --> TOOLS["业务工具层\n订单 / 物流 / 售后"]
-    GRAPH --> GUARD["安全与策略\n认证 / 权限 / 风险 / 转人工"]
-
-    SESSION --> DB[("MySQL")]
-    SESSION --> REDIS[("Redis")]
-    RAG --> QDRANT[("Qdrant")]
-    TOOLS --> BIZ["业务系统 API"]
-    GUARD --> AUDIT[("审计与观测")]
-```
-
-边界说明：`LangGraph` 只负责客服流程状态和路由；`rag/` 只负责知识检索质量；业务工具不直接暴露数据库或内部 API 给模型。
-
-```text
-React Chat UI
-      │ REST + SSE
-      ▼
-FastAPI API 层
-      │
-      ▼
-Customer Service Service
-      │
-      ▼
-LangGraph 客服流程图
-      ├── 会话加载与用户身份
-      ├── 意图识别与槽位提取
-      ├── 风险/权限判断
-      ├── RAG 检索与重排
-      ├── 业务 Tool 调用
-      ├── 回复生成与引用校验
-      ├── 低置信度追问
-      └── 转人工与终态持久化
-      │
-      ├── RAG Core：rag/
-      ├── Business Tools：订单、物流、售后
-      ├── MySQL：会话、消息、审计、限流计数、熔断状态
-      ├── Qdrant：知识库向量和结构元数据
-      └── Redis：短期状态和任务队列（后续引入；限流不依赖 Redis）
-```
-
-### 架构决策
-
-| 决策 | 方案 | 原因 |
+| 能力 | 当前状态 | 边界 |
 | --- | --- | --- |
-| 编排 | LangGraph | 客服需要状态、条件分支、重试、循环和人工介入 |
-| LLM 抽象 | `langchain-core` 按需使用 | 获得标准消息/Tool/Prompt 接口，避免绑定完整生态 |
-| RAG | 保留自研 `rag/` | 已有结构化切块、混合召回和评测，便于质量控制 |
-| API | FastAPI REST + SSE | REST 适合管理资源，SSE 适合回复流和节点事件 |
-| 主数据库 | MySQL | 会话、消息、用户、工具审计、限流计数、熔断状态需要事务和查询能力；与现有 `chat_store` 持久化层一致（限流/熔断/审计统一 MySQL，不引入 Redis 依赖） |
-| 向量库 | Qdrant | 延续现有实现；生产环境切远端服务 |
-| 认证 | MVP 使用 `conversation_id`，上线前接 JWT/OAuth | 先完成流程验证，再接入真实用户体系；业务工具必须在正式认证后开放 |
-| 组织方式 | 按客服 feature 组织新增代码 | 避免把意图、工具、会话逻辑继续堆进单一 `rag.py` |
+| 单包分层 | 已实现 | 旧 rag/langgraph/app 目录已合并 |
+| 文档解析/切块/混合检索/精排/引用 | 已实现 | 语义解析质量、引用支持关系需独立核验 |
+| 同步与 SSE 客服 | 已实现 | 流式知识分支由服务层直接 RAG，尚未整体走图 |
+| 多意图/规则注入检测 | 已实现基线 | 不代表全部攻击可被阻断 |
+| 订单/物流只读工具 | 演示实现 | 固定订单源，不是生产订单系统 |
+| 槽位澄清与知识无素材转人工 | 已实现 | 订单 not_found 首次澄清、连续两次转人工 |
+| JWT 双角色 | 演示实现 | 未覆盖全部接口，缺资源鉴权/租户隔离/刷新 |
+| 客户/运营双端与人工回复 | 已实现 | 轮询同步，未分配人工回复仍有 CAS 竞争边界 |
+| 坐席领取/释放/自动指派 | 已实现基础版 | 无在线状态/技能组/超时回池，计数有截断 |
+| 会话/checkpoint MySQL | 已有代码 | 部分表须预先准备；失败回退内存 |
+| 文档 MySQL 与索引恢复 | 已有代码 | 备份成功且空库才恢复，不保证部分索引补全 |
+| LLM 意图分类器 | 可选实现 | 默认关闭，低置信度追问，失败回退规则 |
+| 限流/订单熔断/审计/脱敏 | 已有基础组件 | 不是全端点限流或全链路隐私保证 |
+| 离线任务/红队门禁 | 已实现 | 当前样本有限，门禁通过不等于逐题全对 |
+| 运营 JSON 性能摘要 | 已实现 | MySQL/内存聚合，指标是事件级代理口径 |
+| Prometheus/应用告警 | 有实现与配置 | 内存事件消费、抓取重复累计问题、无 MySQL SQL 聚合 |
 
-## 5. LangGraph 状态模型
+具体字段与端点以 [API](api.md)、[架构](architecture.md) 为准；坐席行为见 [分配文档](agent-assignment-plan.md)。
 
-### 5.1 状态生命周期
+## 首批业务范围
 
-```mermaid
-stateDiagram-v2
-    [*] --> SessionLoaded: "加载会话与身份"
-    SessionLoaded --> IntentClassified: "识别意图"
-    IntentClassified --> KnowledgeRoute: "知识问答"
-    IntentClassified --> BusinessRoute: "订单或售后"
-    IntentClassified --> Handoff: "投诉或高风险"
-    IntentClassified --> Clarification: "置信度不足"
+知识问题基于材料回答；订单查询只读并校验本人归属；缺信息先追问；退款、售后、投诉和高风险诉求转人工。当前不会自动退款、改址、取消订单，也不生成无业务依据的预计送达时间。
 
-    KnowledgeRoute --> Retrieved: "向量 + BM25 + RRF"
-    Retrieved --> AnswerDrafted: "生成带引用回答"
-    BusinessRoute --> Authorized: "权限校验"
-    Authorized --> ToolExecuted: "调用只读工具"
-    ToolExecuted --> AnswerDrafted: "整理工具结果"
-    Clarification --> AnswerDrafted: "生成追问"
+不承诺全量长期会话记忆：checkpoint 保存消息与槽位，但默认生成适配器没有把历史注入核心生成 Prompt。后续须明确历史长度、摘要、恢复与隐私口径。
 
-    AnswerDrafted --> Validated: "引用与安全校验"
-    Validated --> Persisted: "通过"
-    Validated --> Retrieved: "检索不足或引用无效"
-    Validated --> ToolExecuted: "工具结果需重试"
-    Validated --> Handoff: "高风险或失败"
-    Persisted --> [*]
-    Handoff --> [*]
-```
+## 当前编排与目标设计
 
-客服状态是图的核心契约，建议定义为显式 TypedDict 或 Pydantic 模型：
+当前节点为 `load_session/classify_intent/retrieve/compose_answer/validate_answer/extract_slots/execute_order_tool/clarify/handoff/finalize`，按意图和工具结果分支；完整图见 [图文档](../server/README-graph.md)。
 
-```text
-conversation_id
-user_id / tenant_id
-messages
-current_query
-intent
-intent_confidence
-slots
-retrieval_contexts
-citations
-tool_calls
-tool_results
-risk_level
-needs_human
-handoff_reason
-answer
-response_mode
-retry_count
-trace_id
-```
+目标设计将增加资源鉴权节点、受控写操作确认节点、交接摘要和工单状态；这些不是当前节点名，也未在所有链路执行。工具结果失败不能被模型改写成办理成功，业务结果可直接由结构化字段组装。
 
-状态要求：
-
-- 每个节点只更新自己负责的字段。
-- 工具结果和模型原始输出分开存储，便于审计。
-- 不把完整敏感信息放入 Prompt；进入模型前做脱敏和最小化。
-- `retry_count`、`tool_calls` 和 `risk_level` 必须有上限和白名单。
-- 状态支持从任意人工接管点恢复，而不是只依赖进程内存。
-
-## 6. 客服流程图
-
-### 6.1 单次请求时序
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant User as "用户"
-    participant API as "FastAPI"
-    participant Graph as "LangGraph"
-    participant RAG as "RAG Core"
-    participant Tool as "业务工具"
-    participant LLM as "LLM"
-    participant DB as "会话数据库"
-
-    User->>API: "发送消息"
-    API->>Graph: "conversation_id + message + identity"
-    Graph->>DB: "加载摘要、最近消息、权限"
-    DB-->>Graph: "会话状态"
-    Graph->>LLM: "识别意图与槽位"
-    LLM-->>Graph: "intent + confidence + slots"
-
-    alt "知识问答"
-        Graph->>RAG: "检索并重排"
-        RAG-->>Graph: "contexts + citations"
-    else "业务查询"
-        Graph->>Tool: "权限校验后的只读调用"
-        Tool-->>Graph: "结构化 ToolResult"
-    else "低置信度或高风险"
-        Graph->>Graph: "追问或创建人工交接"
-    end
-
-    Graph->>LLM: "基于资料/工具结果生成回复"
-    LLM-->>Graph: "answer + citations"
-    Graph->>Graph: "引用、敏感内容、承诺校验"
-    Graph->>DB: "保存消息、状态、审计事件"
-    Graph-->>API: "token、节点事件、最终结果"
-    API-->>User: "SSE 或完整回复"
-```
-
-```text
-START
-  ↓
-load_session
-  ↓
-classify_intent
-  ├── greeting/smalltalk ───────────────┐
-  ├── knowledge_question → retrieve ────┤
-  ├── order_query → authorize → tool ───┤
-  ├── after_sale → collect_slots ───────┤
-  └── complaint/high_risk → handoff ────┘
-                                      ↓
-                         compose_answer
-                                      ↓
-                         guardrail_validate
-                         ├── 需追问 → collect_slots
-                         ├── 需重试 → retrieve/tool/generate
-                         ├── 转人工 → handoff
-                         └── 通过 → persist → END
-```
-
-### 节点职责
-
-- `load_session`：加载会话摘要、最近消息和用户权限，不加载无限历史。
-- `classify_intent`：输出意图、置信度和所需槽位；低置信度进入澄清问题。
-- `retrieve`：调用现有 `rag.retrieve()`，保留章节标签、RRF 分数和 rerank 分数。
-- `authorize`：检查登录状态、租户、资源归属和操作权限。
-- `tool`：执行只读业务查询；写操作后续必须增加确认节点。
-- `collect_slots`：一次只追问最关键的缺失字段，避免连续盘问。
-- `compose_answer`：统一生成格式，知识结论必须附 `[来源N]`。
-- `guardrail_validate`：校验引用、敏感内容、业务承诺、工具结果一致性和转人工条件。
-- `handoff`：生成交接摘要、最近上下文、工具结果和转人工原因。
-- `persist`：保存消息、状态、指标和审计事件。
-
-## 7. 工具边界
-
-工具接口建议按业务域拆分，并统一返回结构：
+当前只读工具 `query_order_status` 统一返回：
 
 ```text
 ToolResult:
-  success: bool
-  data: object | null
-  error_code: string | null
-  user_message: string | null
-  audit_id: string
+  tool: str
+  status: ok | not_found | forbidden | timeout | error
+  ok: bool
+  message: str
+  data: dict | null
+  retries: int
+  duration_ms: int
 ```
 
-第一批工具只开放只读能力：
+尚未实现独立售后政策工具、工单创建工具、业务写工具或统一 `audit_id` 工具返回字段。后续写操作需“展示影响 → 用户确认 → 执行”，包含鉴权、幂等、审计与失败补偿。
 
-- `get_order_status(order_id)`
-- `get_logistics_status(order_id)`
-- `get_after_sale_policy(order_type)`
-- `create_handoff(reason, summary)`
+## API 与数据规划
 
-工具必须满足：参数 Pydantic 校验、超时、重试上限、权限检查、幂等标识、结构化日志和审计记录。退款、改址、取消订单等写操作必须经过“展示影响 → 用户确认 → 再执行”三步流程。
+已实现登录、知识库、同步/SSE 消息、会话读取/列表、人工回复、坐席领取/释放、坐席列表、指标摘要和近期告警。首次读取摘要或发消息可懒创建会话，没有独立会话创建端点。
 
-## 8. API 规划
+| 尚未实现的端点 | 目标 |
+| --- | --- |
+| `POST /api/v1/conversations` | 显式创建与所有者绑定 |
+| `DELETE /api/v1/conversations/{id}` | 删除/匿名化与审计 |
+| 分页消息读取 | 游标、排序、历史长度边界 |
+| `GET /api/v1/ready` | 数据库/向量/模型/工具就绪检查 |
+| `POST /api/v1/evaluations/run` | 异步评测运行 |
+| `GET /api/v1/evaluations/{run_id}` | 评测结果与逐题明细 |
 
-### 会话
+当前表与自动建表范围见架构文档。`tool_calls/handoffs/evaluation_cases/evaluation_runs` 是后续独立表设计，不是当前已部署表；工具状态现在写图状态、指标/审计，语料现在是 JSON 文件。需补集中 SQL 迁移，核对 `messages/graph_checkpoints/rag_documents` 及原文件列。
 
-- `POST /api/v1/conversations`：创建会话。
-- `GET /api/v1/conversations/{id}`：读取会话摘要和状态。
-- `GET /api/v1/conversations/{id}/messages`：分页读取消息。
-- `DELETE /api/v1/conversations/{id}`：删除或匿名化会话。
+## 安全、可靠性与可观测目标
 
-### 对话
+- 完整的账号认证与会话/文档资源归属、租户过滤；客户端不能自选受信任身份。
+- 用户、文档、工具返回均视作不可信输入；规则检测与模型防线分开评测。
+- Prompt、存储、日志、JSON 和 SSE 输出分别验证脱敏，避免用单层中间件概括全链路。
+- LLM/向量/业务源超时、重试与熔断按真实调用验证；订单工具现有超时线程退出行为需另外测量，不宣称硬时限。
+- 限制图步数、生成重写、工具调用数和历史长度，并可从 trace_id 排查失败。
+- 人工接管有归属、CAS、交接摘要、在线状态和回池机制；不得多人竞争后冒名回复。
+- Prometheus 与告警补 MySQL 查询、抓取幂等、时间窗口、告警去重/冷却与监控部署验证。
 
-- `POST /api/v1/conversations/{id}/messages`：同步返回完整客服回复。
-- `POST /api/v1/conversations/{id}/messages/stream`：SSE 返回 token、引用、工具状态和最终结果。
-- 现有 `POST /api/v1/ask` 保留为兼容接口，内部逐步转发到知识问答子图。
+## 评测口径
 
-### 运维与评测
+检索评测输出 Recall@1/3/5 和 MRR，并明确相关 chunk/文档/关键词的标注口径。客服任务评测 mock 工具跑图，检查意图、工具、越权、转人工和槽位。红队评测仅断言当前样本的阻断/泄露条件。
 
-- `GET /api/v1/health`：进程和依赖健康状态。
-- `GET /api/v1/ready`：数据库、Qdrant、模型和业务工具就绪状态。
-- `POST /api/v1/evaluations/run`：离线运行指定评测集，不允许在线用户触发真实写操作。
-- `GET /api/v1/evaluations/{run_id}`：读取指标和逐题明细。
+当前标注集为 `cs_eval_cases.json` 57 条（10 条有检索标注）与 `cs_redteam_cases.json` 13 条。原始语料来源没有在仓库逐条标注，不称为已核实真实用户语料。检索标注引用的部分 PDF 未随仓库提供，复现需匹配资料。
 
-## 9. 数据模型
+在线“一次解决率”是单事件无追问/未转人工/无错误的代理指标；“无依据承诺率”是引用校验失败比例；时延来自埋点，不直接代表首 token 时延或客户满意度。
 
-### 9.1 数据关系图
-
-```mermaid
-erDiagram
-    USER ||--o{ CONVERSATION : owns
-    CONVERSATION ||--o{ MESSAGE : contains
-    CONVERSATION ||--o| CHECKPOINT : resumes
-    CONVERSATION ||--o{ TOOL_CALL : records
-    CONVERSATION ||--o| HANDOFF : creates
-    EVALUATION_RUN ||--o{ EVALUATION_CASE : includes
-
-    USER {
-        string id PK
-        string tenant_id
-    }
-    CONVERSATION {
-        string id PK
-        string user_id FK
-        string status
-        string summary
-    }
-    MESSAGE {
-        string id PK
-        string conversation_id FK
-        string role
-        json citations
-    }
-    CHECKPOINT {
-        string conversation_id PK
-        json graph_state
-        datetime updated_at
-    }
-    TOOL_CALL {
-        string id PK
-        string conversation_id FK
-        string tool_name
-        string status
-        string audit_id
-    }
-    HANDOFF {
-        string id PK
-        string conversation_id FK
-        string reason
-        string status
-    }
-    EVALUATION_RUN {
-        string id PK
-        string version
-        float recall_at_5
-        float mrr
-    }
-    EVALUATION_CASE {
-        string id PK
-        string run_id FK
-        string intent
-        json labels
-    }
+```bash
+# 从 server/，完成 editable 安装后
+.venv/bin/python -m server.cli cs-eval --fail-under 0.9
+.venv/bin/python -m server.cli cs-redteam --fail-under 0.9
+.venv/bin/python -m server.cli cs-eval --json
+# 需要真实索引与匹配资料
+.venv/bin/python -m server.cli cs-eval --with-retrieval
 ```
 
-首期建议建立以下表：
+本次任务集有 2 条标注仍期望首次查无此单即转人工，与当前先追问行为不一致；门禁通过但逐题不是全对。详细数值、警告及未验证项见 [校准记录](documentation-audit.md)。
 
-- `conversations`：会话归属、渠道、状态、摘要、创建和更新时间。
-- `messages`：角色、内容、引用、节点来源、token 用量和耗时。
-- `tool_calls`：工具名、脱敏参数、结果摘要、状态、耗时、审计 ID。
-- `handoffs`：转人工原因、交接摘要、处理状态和接管时间。
-- `evaluation_cases`：问题、相关文档/chunk、意图、期望工具和安全标签。
-- `evaluation_runs`：版本、配置、Recall@K、MRR、任务成功率和失败明细。
-
-已落地持久化表（`server/services/`）：
-
-- `conversations` / `messages` / `graph_checkpoints`：会话、消息与知识澄清轮次计数（`chat_store.py`，pymysql 短连接）。
-- `langgraph_checkpoints` / `langgraph_checkpoint_writes`：LangGraph 原生 checkpointer 的 MySQL 后端（`checkpoint_saver.py`），按 `thread_id=conversation_id` 存客服图状态（channel_values/versions/元数据），首用自动建表。
-
-Qdrant payload 继续保存 `chapter/title/section/heading_path`；客服回答引用时同时返回文档和章节路径，便于坐席快速定位依据。
-
-## 10. 安全与可靠性
-
-- 身份认证、租户隔离和资源归属检查必须在工具调用前完成。
-- Prompt 中明确区分“知识库资料”“用户输入”和“工具结果”，防止提示注入。
-- 用户输入、文档内容和工具返回值都视为不可信数据。
-- 敏感字段脱敏后再进入日志、Prompt 和人工交接摘要。
-- 对模型、Qdrant、业务 API 分别设置超时、重试和熔断。
-- 工具失败不能被模型改写成“已办理成功”。
-- 记录 `trace_id`，串起请求、图节点、LLM、检索和工具调用。
-- 设置最大图步数、最大重写次数、最大工具调用数和上下文长度。
-- 高风险意图默认人工接管，不由模型自行决定放行。
-
-## 11. 评测体系
-
-### 检索质量
-
-沿用现有标注集，并逐步加入精确 chunk 标注：
-
-- `Recall@1/3/5`：相关 chunk 是否进入前 K。
-- `MRR`：第一个相关 chunk 的排名。
-- 分别比较结构切块粒度、BM25 标题权重、RRF 参数和 rerank 阈值。
-
-### 客服任务质量
-
-- 意图识别准确率和低置信度召回率。
-- 槽位收集完成率。
-- 工具调用成功率、参数正确率和越权拦截率。
-- 有依据回答率、引用合法率和无依据承诺率。
-- 一次解决率、转人工率、重复追问率。
-- P50/P95 首 token 延迟和完整响应延迟。
-
-评测集每条样例建议增加：`intent`、`relevant`、`expected_tools`、`required_slots`、`must_handoff`、`forbidden_actions`。离线评测默认 mock 业务工具，禁止连接生产写接口。
-
-**已落地**（`server/core/offline_eval.py`，`python -m server.cli cs-eval`）：
-- `evaluate_customer_service`：mock retriever/generator/order_tool 跑客服图，逐条比对图状态与标注。
-- 聚合指标：`intent_accuracy` / `tool_accuracy` / `forbidden_blocked_rate` / `handoff_accuracy` / `slot_completion_rate` / `first_resolution_rate`，附逐题明细。
-- 标注集字段：`question` / `intent` / `expected_tools` / `required_slots` / `must_handoff` / `forbidden_actions` / `user_id`，知识问答样例可加 `relevant_docs` / `relevant_keywords` 用于检索联动。
-- 默认标注集 `server/data/cs_eval_cases.json`（57 条，覆盖 6 类意图 + 边界/长尾：大小写/带空格/全角括号/多单号/极简订单号、多意图混合、口语、emoji、纯空白/纯数字/纯符号、英文论文问答等）；`--cases` 可指定自定义 JSON，缺省回退内置 8 条样例。
-- 阈值门禁：`check_thresholds` + `cs-eval --fail-under 0.9`（任一门禁指标低于阈值则退出码 1），`--json` 输出报告；已接入 GitHub Actions CI（`.github/workflows/ci.yml`）。
-- 检索评测联动：`compute_retrieval_metrics` / `evaluate_retrieval`（Recall@K/MRR），`cs-eval --with-retrieval` 对带检索标注的知识问答样例跑召回（需真实向量库），与任务评测共用同一份标注集。当前 10 条知识问答样例带 `relevant_docs` / `relevant_keywords` 标注，覆盖 `01-AI-Agent入门.md` / `02-RAG原理.md` / `DeepFace-ICCV2017.pdf` / `ResNet-CVPR2016.pdf`（实测 Recall@1/3/5=1.0、MRR=1.0）。
-- 在线埋点指标（`/metrics`）与离线评测集互补：前者实时趋势，后者回归验证任务级正确性。
-
-## 12. 分阶段路线
+## 分阶段路线与状态
 
 ### Phase 0：契约整理
 
-- [x] 统一引用格式、错误结构、检索结果结构和生成器接口。
-- [x] 把 `rag` 的 Retriever/Reranker/Generator 包装为可注入适配器。
-- [x] 修正 `langgraph/` 与 `rag/` 的导入边界。
-- [x] 增加客服状态模型和图节点契约测试。
+- [x] 单包导入、检索/生成/分类器注入、客服状态和图契约测试。
+- [x] 产品主链路 `[来源N]`、素材和错误结构。
+- [ ] 兼容 RAG 图 `[N]` 与产品格式统一；全 API 响应字段整理。
 
 ### Phase 1：客服 MVP
 
-- [x] MVP 内存会话和消息接口。
-- [x] 订单/售后/投诉安全转人工；知识问答继续复用 RAG。
-- [x] SSE 流式回复（知识问答逐 token；业务/澄清/转人工走图 meta）。
-- [x] 只读订单/物流 Tool（Pydantic 参数校验、归属校验、超时/失败显式分流）。
-- [x] 三层路由：快速业务意图 → RAG 知识优先 → 无素材澄清；连续两轮无解转人工。
-- [x] 页面链路提示：气泡“当前链路”标签 + 澄清原因 + 右侧路由高亮。
-- [x] 人工接管后坐席直接回复：`POST .../messages/manual`，`response_mode=manual`，前端切换人工模式。
-- [x] 会话/消息 MySQL 持久化（回退内存显性标注 `storage`）；文档切块同步存 MySQL、启动自动重建向量索引。
-- [x] 意图识别、知识问答、低置信度追问的业务闭环（确定性分类器 + 三层路由 + 澄清转人工）。
-- [x] 引用校验、工具结果校验和基础转人工。
-- [x] LangGraph checkpoint 生产持久化（重启不丢澄清/转人工中间态）。
+- [x] 知识问答、订单槽位、只读演示工具、澄清/转人工。
+- [x] SSE、链路标签、会话/消息存储实现、人工回复与双端轮询。
+- [x] MySQL checkpoint 和空库文档恢复代码。
+- [x] 多坐席、会话归属、领取/释放、基础自动指派和分栏。
+- [ ] 生产库迁移与恢复验证、人工回复竞争闭环、真实业务源替换。
 
-### Phase 2：生产化
+### Phase 2：生产化与安全
 
-- [x] JWT 演示认证：operator/customer 双角色、登录接口、接口按角色鉴权（仓库内双端页面）。
-- [x] 结构化日志 + 请求级 trace_id 链路追踪（日志每行带 trace_id，可按 ID 串起一轮对话）。
-- [x] LLM 意图分类器：`LLMIntentClassifier` 同契约替换规则分类器，低置信度（<0.7）生成自适应追问，失败/无 key 回退规则分类器（`LLM_CLASSIFIER=1` 启用，默认关闭）。
-- [x] 客服任务评测体系：离线评测（`cs-eval` 任务级门禁 + Recall@K/MRR 检索联动）+ 在线埋点（evaluation_events）+ Prometheus 指标暴露（/metrics）+ Grafana 面板 + 告警（阈值判定/webhook/运营端面板）。
-- [x] 安全加固（PII 脱敏）：Prompt、指标埋点、API 响应三层脱敏（pure regex + recursive）。
-- [x] 限流、熔断与审计日志（MySQL 实现）：`rate_limit.py` 固定窗口原子计数 + `RateLimitMiddleware` 429；`circuit_breaker.py` closed/open/half-open 状态机包裹订单工具；`audit_log.py` 全链路审计落库（trace_id 关联 + PII 脱敏）。
-- [x] 安全评测（红队）：`cs-redteam` 门禁 + `cs_redteam_cases.json` 三类攻击语料（提示注入/越权/对抗样本），断言攻击被阻断/不泄露；分类器注入检测 + 对抗样本归一化（`security_flag` 标注，供审计与交接）。
-- [ ] JWT/OAuth 生产化（真实验证码/密码重置/令牌刷新/多租户隔离）、MySQL 表结构扩展、Redis 任务队列。
+- [x] 演示 JWT、trace_id、可选 LLM 分类器。
+- [x] 任务/红队评测、指标/告警/监控配置、脱敏、限流/熔断/审计基础组件。
+- [ ] 全资源鉴权、多租户、生产账号、令牌刷新与密码重置。
+- [ ] SQL 指标/告警聚合、Prometheus 幂等、告警窗口/去重和在线监控验证。
+- [ ] 全链路安全测试与持续红队语料扩充；真实外部服务错误与超时验证。
 
 ### Phase 3：业务闭环
 
-- 用户确认后的受控写操作。
-- 售后流程编排和工单系统对接。
-- 坐席工作台、交接摘要和会话质量分析。
-- 基于评测结果持续调优检索、提示和路由。
+- [ ] 受控退款/改址/取消等写操作。
+- [ ] 售后流程、工单、交接摘要和会话关闭。
+- [ ] 在线坐席、超时回池、技能组和精确负载。
+- [ ] 用户反馈、会话质量、实际解决率与跨版本检索实验。
 
-## 13. 首个迭代验收标准
+Redis/任务队列是可选后续方案，当前可靠性组件不依赖 Redis。引入队列需先明确异步任务和重试需求。
 
-- 单轮知识问答与现有 `/ask` 结果质量不下降。
-- 多轮会话可恢复，服务重启不丢失会话状态。
-- 订单查询只能读取当前用户有权访问的订单。
-- 工具失败、低置信度和高风险请求都能进入明确分支。
-- 所有知识型结论都有合法引用或明确说明资料不足。
-- 离线评测同时输出检索指标和客服任务指标。
-- 能从一个 `trace_id` 定位完整请求中的模型、检索和工具调用。
+## 优先级与验收
 
-## 14. 当前进度与下一步迭代
-
-### 版本里程碑总览
-
-| 版本 | 范围 | 状态 |
+| 优先级 | 工作 | 验收证据 |
 | --- | --- | --- |
-| **v0.1** | Phase 0–1 客服 MVP：三层路由、订单/售后/投诉安全分流、SSE、人工接管、MySQL 持久化、checkpoint 恢复 | ✅ 已交付 |
-| **v0.2** | Phase 2 生产化与安全（P0 收口）：JWT 演示认证、trace_id、评测体系、PII 脱敏、多意图识别、限流/熔断/审计（MySQL）、红队评测 | ✅ 已交付（本轮） |
-| **v0.3** | P1 业务真实化：真实订单/物流只读接口、JWT/OAuth 生产化（真实验证码/密码重置/令牌刷新/多租户）、MySQL 表扩展、Redis 任务队列 | ⬜ 下一步 |
-| **v0.4** | Phase 3 / P2 业务闭环：受控写操作（退款/改址/取消）、售后流程编排 + 工单、坐席工作台增强、会话质量分析 | ⬜ 待启动 |
-| **持续** | 红队语料与防线演进：谐音/编码/多轮注入变体、注入检测并入 LLM 分类器 | 🔁 语料已入 CI，防线持续对抗 |
+| P0 | 资源鉴权、人工 CAS、数据库迁移、监控正确性 | 越权与竞争回归、新库迁移、重复抓取/SQL 事件一致性 |
+| P1 | 真实只读源、生产认证、坐席分页/在线状态 | 真业务只读联调、token 生命周期、跨页与离线坐席测试 |
+| P2 | 工单和受控写操作 | 用户确认、幂等、审计、失败补偿与人工恢复 |
+| 持续 | 语料标注、检索/红队、告警阈值校准 | 样本来源与失败明细、版本/配置、可复现报告 |
 
-> v0.2 已将 Phase 2 中「安全与正确性」全部收口（多意图识别 → 限流/熔断/审计 → 红队评测）；Phase 2 残余仅 JWT/OAuth 生产化与 Redis 任务队列，归入 v0.3。
-
-### 已完成（Phase 0 → Phase 2 部分）
-
-- 会话消息接口 + 三层路由（快速意图 → 知识 RAG → 澄清/人工）。
-- 订单/物流只读工具（本人可查、缺单号澄清、非本人/失败转人工）。
-- SSE 流式回复 + 引用校验 + 页面链路提示。
-- 人工接管闭环：运营直接回复，双端轮询同步。
-- 演示 JWT 双角色认证 + 双端页面（运营工作台 / 客户聊天窗）。
-- 会话/消息 MySQL 持久化 + 文档切块落库 + 启动自动重建向量索引。
-- 请求级 trace_id 统一日志链路追踪。
-- LangGraph checkpoint 生产持久化（MySQL 后端 checkpointer）：澄清/转人工中间态按 thread_id=conversation_id 持久化，重启恢复。
-- LLM 意图分类器：`llm_classifier.LLMIntentClassifier` 替换确定性规则，JSON 结构化输出（intent/confidence/slots），低置信度（<0.7）由 LLM 生成针对性追问；失败/无 key 自动回退规则分类器，`LLM_CLASSIFIER=1` 启用（默认关闭保持确定性）。
-- 客服任务评测体系：`metrics.py` 指标埋点（`evaluation_events` 表，MySQL + 内存回退）、`prom_exporter.py` Prometheus 指标暴露（`/metrics`，官方 `prometheus_client` 库）、`alerts.py` 告警（转人工率/出错率/无依据承诺率阈值判定 + webhook + `evaluation_alerts` 表）、Grafana 面板（`deploy/grafana/dashboard.json`）+ Prometheus 告警规则（`deploy/prometheus/alerts.yml`）、运营端告警面板。
-- 客服任务离线评测集：`offline_eval.py`（`evaluate_customer_service` + `check_thresholds` + `cs-eval` CLI），mock 工具跑图验证意图/工具/转人工/越权/槽位五项任务级正确性；默认标注集 `data/cs_eval_cases.json`（57 条真实语料含边界/长尾，10 条带检索标注），`--fail-under` 阈值门禁 + `--json` 报告，已纳入 CI；支持 `--with-retrieval` 与 Recall@K/MRR 检索评测联动（共用同一份标注集，实测 Recall@1/3/5=1.0、MRR=1.0）。
-- 安全加固（PII 脱敏）：`redactor.py` 纯正则脱敏器（手机号/身份证/邮箱/银行卡/订单号）+ Prompt/指标/API 响应三层接入（`REDACTOR_ENABLED` 开关）。
-- 多意图混合识别：`classifier.py` 新增 `detect_intents` 收集全部命中意图，按风险优先级仲裁主意图（投诉 > 售后 > 订单 > 寒暄），`intents`/`is_multi_intent` 写入 state；LLM 分类器 `_SYSTEM`/`_sanitize` 同步兼容多意图输出；标注集 4 条混合样例修正为售后转人工（`test_multi_intent.py` 9 例回归）。
-- 限流、熔断与审计日志（MySQL 实现，无 Redis 依赖）：`rate_limit.py`（固定窗口原子自增，`rate_limit_counters` 表）+ `RateLimitMiddleware`（按客户端 IP 对客服消息写接口限流，超限 429 + `rate_limited` 审计）；`circuit_breaker.py`（closed/open/half-open 状态机，`circuit_breaker_state` 表，包裹 `query_order_status`，timeout/error 计失败、not_found/forbidden 不计）；`audit_log.py`（`audit_logs` 表，全链路 message_received/tool_call/assistant_replied/rate_limited/manual_reply/error 事件，trace_id 关联 + PII 脱敏）。三者均无 MySQL 时回退内存（`test_rate_limit.py`/`test_circuit_breaker.py`/`test_audit_log.py` 21 例）。
-- 安全评测（红队）：`offline_eval.py` 新增 `evaluate_redteam`（复用 mock 工具跑图，逐题断言意图/转人工/禁止工具/敏感串泄露），CLI `cs-redteam --fail-under` 门禁；攻击语料 `data/cs_redteam_cases.json`（13 条：提示注入 6 / 越权 2 / 对抗样本 5）；分类器配套加固——`_normalize_query`（去空白/混淆符号防拆字绕过）+ `_INJECTION_PATTERNS`/`_detect_injection`（注入命中归 complaint 并打 `security_flag="prompt_injection"`，state 新增 `security_flag` 字段供审计/交接）。实测 13/13 攻击全部被阻断（`redteam_block_rate=1.0`）（`test_redteam.py` 10 例）。
-
-### 下一步迭代
-
-> 当前状态：Phase 0 → Phase 2 安全/正确性（P0）全部收口，对应 v0.1/v0.2 已交付并推送 GitHub（红队门禁已纳入 CI）。剩余工作集中在 v0.3 业务真实化与 v0.4 业务闭环。以下按优先级排列。
-
-**P1 — 业务真实化（v0.3）**
-1. **真实业务只读接口**：替换演示订单源（`orders.py` 现为硬编码样例），接入真实订单/物流系统。
-2. **JWT/OAuth 生产化**：真实验证码、密码重置、令牌刷新、多租户隔离；MySQL 表结构扩展；Redis 任务队列（可选引入）。
-
-**P2 — 业务闭环（Phase 3 / v0.4）**
-3. **受控写操作**：退款/改址/取消订单走「展示影响 → 确认 → 执行」三步。
-4. **售后流程编排 + 工单系统对接**、坐席工作台增强、会话质量分析。
-
-**持续**
-5. **红队语料与防线演进**：红队门禁已纳入 CI（`ci.yml` 跑 `cs-redteam --fail-under 0.9`）；继续补充谐音/编码/多轮注入等对抗变体，把注入检测并入 LLM 分类器（规则先兜底、LLM 判复杂变体）。安全评测是持续对抗而非一次性交付。
+生产验收需分别闭环全量测试、真实 API/数据库/模型、浏览器双端操作、重启恢复、监控和部署；仓库组件测试或门禁通过只覆盖其中一部分。本次为文档校准，没有完成生产验收或发布。
