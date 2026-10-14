@@ -57,7 +57,7 @@ ModuleNotFoundError: No module named 'server'
 
 ### Context
 - 操作：`./scripts/start.sh`（内部 `uvicorn server.main:app --reload`）或带 `--workers N` 启动。
-- 根因：目录从 `fastapi-app` 重命名为 `ai-service` 后，
+- 根因：目录从 `fastapi-app` 重命名为 `ai-customer-service` 后，
   `server/.venv/lib/python3.12/site-packages/_editable_impl_server.pth`
   仍写死旧绝对路径 `/Users/zenquan/ZCodeProject/fastapi-app/server/src`。
   直接 `import server` 时若恰好在 server/ 下或 pytest 配了 `pythonpath=src` 可掩盖，
@@ -77,7 +77,7 @@ uv pip install --python .venv/bin/python -e '.[local]' --group dev
 
 ### Resolution
 - **Resolved**: 2026-09-06T16:40:00+08:00
-- **Notes**: 已把 pth 指向 `/Users/zenquan/ZCodeProject/ai-service/server/src`，
+- **Notes**: 已把 pth 指向 `/Users/zenquan/ZCodeProject/ai-customer-service/server/src`，
   并用 spawn 子进程导入 `server.main` 实测通过。
 
 ---

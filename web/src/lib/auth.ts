@@ -9,8 +9,8 @@ export interface AuthUser {
   display_name: string
 }
 
-const TOKEN_KEY = 'ai-service-token'
-const USER_KEY = 'ai-service-user'
+const TOKEN_KEY = 'ai-customer-service-token'
+const USER_KEY = 'ai-customer-service-user'
 
 function readStorage(key: string): string | null {
   try {

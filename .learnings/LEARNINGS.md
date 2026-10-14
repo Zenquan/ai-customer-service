@@ -41,7 +41,7 @@ Keep validation commands scoped to application and test source paths.
 
 ### Details
 `uv pip install -e` 生成的 `_editable_impl_<pkg>.pth` 写的是安装时的绝对源码路径。
-仓库文件夹改名（`fastapi-app` → `ai-service`）后，pth 仍指向旧路径；普通单进程或 pytest
+仓库文件夹改名（`fastapi-app` → `ai-customer-service`）后，pth 仍指向旧路径；普通单进程或 pytest
 （`pythonpath=src`）可能不暴露，而 `--reload`/`--workers N` 的 spawn 子进程稳定触发
 `ModuleNotFoundError`。
 
