@@ -72,8 +72,6 @@ const request = XRequest('https://your-api.com/chat', {
 
 > ⚠️ **重要提醒**：当 XRequest 用于 x-chat-provider 或 use-x-chat 的 provider 中时，`manual: true` 是必须的配置项，否则会立即发送请求而不是等待调用。
 
-````
-
 ### 带 URL 参数
 
 ```typescript
@@ -84,7 +82,7 @@ const request = XRequest('https://your-api.com/chat', {
     max_tokens: 1000,
   },
 });
-````
+```
 
 # 4. 流式配置
 

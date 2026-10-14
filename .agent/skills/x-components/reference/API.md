@@ -1,6 +1,6 @@
 ## Bubble
 
-通用属性参考：[通用属性](/docs/react/common-props)
+通用属性参考：[通用属性](https://x.ant.design/docs/react/common-props/)
 
 ### Bubble
 
@@ -112,7 +112,7 @@ interface BubbleAnimationOption {
 
 | 属性 | 说明 | 类型 | 默认值 | 版本 |
 | --- | --- | --- | --- | --- |
-| items | 气泡数据列表，`key`，`role` 必填。`styles`、`classNames` 会覆盖 Bubble.List 对应配置。当结合X SDK [`useXChat`](/x-sdks/use-x-chat-cn) 使用时可传入`status` 帮助 Bubble 对配置进行管理 | (([BubbleProps](#bubble) & [DividerBubbleProps](#bubbledivider)) & { key: string \| number, role: string , status: MessageStatus, extraInfo?: AnyObject})[] | - | - |
+| items | 气泡数据列表，`key`，`role` 必填。`styles`、`classNames` 会覆盖 Bubble.List 对应配置。当结合X SDK [`useXChat`](https://x.ant.design/x-sdks/use-x-chat-cn/) 使用时可传入`status` 帮助 Bubble 对配置进行管理 | (([BubbleProps](#bubble) & [DividerBubbleProps](#bubbledivider)) & { key: string \| number, role: string , status: MessageStatus, extraInfo?: AnyObject})[] | - | - |
 | autoScroll | 是否自动滚动 | boolean | `true` | - |
 | role | 气泡角色默认配置 | [RoleType](#roletype) | - | - |
 
@@ -124,7 +124,7 @@ type MessageStatus = 'local' | 'loading' | 'updating' | 'success' | 'error' | 'a
 
 #### InfoType
 
-配合 [`useXChat`](/x-sdks/use-x-chat-cn) 使用 ，`key` 可做为 `MessageId`，`extraInfo` 可作为自定义参数。
+配合 [`useXChat`](https://x.ant.design/x-sdks/use-x-chat-cn/) 使用 ，`key` 可做为 `MessageId`，`extraInfo` 可作为自定义参数。
 
 ```typescript
 type InfoType = {
@@ -203,7 +203,7 @@ export type RoleType = Partial<
 
 ### Bubble.System
 
-通用属性参考：[通用属性](/docs/react/common-props)
+通用属性参考：[通用属性](https://x.ant.design/docs/react/common-props/)
 
 | 属性    | 说明         | 类型                                               | 默认值    | 版本 |
 | ------- | ------------ | -------------------------------------------------- | --------- | ---- |
@@ -213,7 +213,7 @@ export type RoleType = Partial<
 
 ### Bubble.Divider
 
-通用属性参考：[通用属性](/docs/react/common-props)
+通用属性参考：[通用属性](https://x.ant.design/docs/react/common-props/)
 
 | 属性 | 说明 | 类型 | 默认值 | 版本 |
 | --- | --- | --- | --- | --- |
@@ -224,7 +224,7 @@ export type RoleType = Partial<
 
 ## Sender
 
-通用属性参考：[通用属性](/docs/react/common-props)
+通用属性参考：[通用属性](https://x.ant.design/docs/react/common-props/)
 
 ### SenderProps
 
@@ -418,7 +418,7 @@ const [skill, setSkill] = useState([]);
 
 ## Conversations
 
-通用属性参考：[通用属性](/docs/react/common-props)
+通用属性参考：[通用属性](https://x.ant.design/docs/react/common-props/)
 
 ### ConversationsProps
 
@@ -489,7 +489,7 @@ MenuProps & {
 
 ## Welcome
 
-通用属性参考：[通用属性](/docs/react/common-props)
+通用属性参考：[通用属性](https://x.ant.design/docs/react/common-props/)
 
 ### WelcomeProps
 
@@ -508,7 +508,7 @@ MenuProps & {
 
 ## Prompts
 
-通用属性参考：[通用属性](/docs/react/common-props)
+通用属性参考：[通用属性](https://x.ant.design/docs/react/common-props/)
 
 ### PromptsProps
 
@@ -541,7 +541,7 @@ MenuProps & {
 
 ## Attachments
 
-通用属性参考：[通用属性](/docs/react/common-props)。
+通用属性参考：[通用属性](https://x.ant.design/docs/react/common-props/)。
 
 ### AttachmentsProps
 
@@ -588,7 +588,7 @@ interface Attachment<T = any> extends UploadFile<T>, Omit<FileCardProps, 'size' 
 
 ## Suggestion
 
-通用属性参考：[通用属性](/docs/react/common-props)
+通用属性参考：[通用属性](https://x.ant.design/docs/react/common-props/)
 
 更多配置请查看 [CascaderProps](https://ant.design/components/cascader-cn#api)
 
@@ -627,7 +627,7 @@ Suggestion 接受泛型以自定义传递给 `items` renderProps 的参数类型
 
 ## Think
 
-通用属性参考：[通用属性](/docs/react/common-props)
+通用属性参考：[通用属性](https://x.ant.design/docs/react/common-props/)
 
 ### ThinkProps
 
@@ -648,7 +648,7 @@ Suggestion 接受泛型以自定义传递给 `items` renderProps 的参数类型
 
 ## ThoughtChain
 
-通用属性参考：[通用属性](/docs/react/common-props)
+通用属性参考：[通用属性](https://x.ant.design/docs/react/common-props/)
 
 ### ThoughtChainProps
 
@@ -694,7 +694,7 @@ Suggestion 接受泛型以自定义传递给 `items` renderProps 的参数类型
 
 ## Actions
 
-通用属性参考：[通用属性](/docs/react/common-props)
+通用属性参考：[通用属性](https://x.ant.design/docs/react/common-props/)
 
 ### ActionsProps
 
@@ -753,7 +753,7 @@ Suggestion 接受泛型以自定义传递给 `items` renderProps 的参数类型
 
 ## FileCard
 
-通用属性参考：[通用属性](/docs/react/common-props)
+通用属性参考：[通用属性](https://x.ant.design/docs/react/common-props/)
 
 ### FileCardProps
 
@@ -826,7 +826,7 @@ type PresetIcons =
 
 ## Sources
 
-通用属性参考：[通用属性](/docs/react/common-props)
+通用属性参考：[通用属性](https://x.ant.design/docs/react/common-props/)
 
 ### SourcesProps
 
@@ -859,7 +859,7 @@ interface SourcesItem {
 
 ## CodeHighlighter
 
-通用属性参考：[通用属性](/docs/react/common-props)。
+通用属性参考：[通用属性](https://x.ant.design/docs/react/common-props/)。
 
 ### CodeHighlighterProps
 
@@ -1033,7 +1033,7 @@ type useNotification = [
 
 ## Folder
 
-通用属性参考：[通用属性](/docs/react/common-props)
+通用属性参考：[通用属性](https://x.ant.design/docs/react/common-props/)
 
 ### FolderProps
 
