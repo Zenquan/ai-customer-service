@@ -1,7 +1,7 @@
 """可独立运行的 RAG 问答示例（注入 mock 检索/生成，无需 rag 核心或真实 LLM）。
 
 用法：
-    python examples/quickstart.py "什么是混合检索？"
+    python -m server.graph.quickstart_example "什么是混合检索？"
 """
 from __future__ import annotations
 

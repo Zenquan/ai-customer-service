@@ -17,8 +17,8 @@ SERVER_ROOT = _SERVER_ROOT
 _ENV_FILE = _SERVER_ROOT / ".env"
 load_dotenv(_ENV_FILE)
 
-# HF 镜像（国内必需）：fastembed 首次会自动下载 bge-small-zh 模型（约 150MB），
-# 直连 huggingface.co 常超时；设为 hf-mirror.com 走国内镜像（已实测可达）。
+# HF 镜像默认配置：fastembed 首次下载下方 EMBED_MODEL 对应模型。
+# 可通过环境变量覆盖下载端点；可用性取决于运行环境网络。
 # 已在代码里设置，无需每次命令行 export。
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 # 关键：禁用 HF 新版 xet 存储后端（cas-server.xethub.hf.co 国内 401/超时）。

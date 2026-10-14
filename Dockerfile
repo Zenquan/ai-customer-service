@@ -1,6 +1,6 @@
 # AI 智能客服系统 · 单容器部署镜像（CloudBase 云托管 Git 仓库自动部署 / 任意容器平台）
 #
-# CloudBase「通过 Git 仓库部署」会在 master push 后拉取仓库源码，
+# 若平台已配置 Git 分支自动部署，将在对应分支 push 后拉取源码。
 # 以仓库根目录为 Docker 构建上下文执行本文件，因此：
 #   - 前端必须在镜像内构建（web/dist 不入库、不依赖本地预构建产物）
 #   - server/.env 不入库、不进镜像；密钥与数据库连接统一由
@@ -23,7 +23,7 @@ COPY web/ ./
 RUN pnpm build
 
 # ── 阶段 2：运行镜像（Python 3.12）────────────────────────────────────
-# Python 3.12：与本地开发保持统一（fastembed→onnxruntime 在 3.13/3.14 无 macOS x86_64 wheel）。
+# Python 3.12：与本地开发统一；版本选择源于历史本地推理依赖兼容问题。
 # 部署镜像内不做本地向量推理：embedding 走远程 /embeddings（EMBED_BASE_URL），
 # 依赖走 server/pyproject.toml 且不装 [local] extra（fastembed 不进镜像）。
 FROM python:3.12-slim
