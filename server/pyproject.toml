@@ -3,7 +3,7 @@ name = "server"
 version = "1.0.0"
 description = "RAG 客服系统后端：FastAPI API + RAG Core（解析→切块→向量→混合检索→生成→引用校验）+ LangGraph 客服编排 + 会话/文档持久化"
 readme = "README.md"
-# 锁定 Python 3.12：fastembed→onnxruntime 在 macOS x86_64 + 3.13/3.14 无预编译 wheel
+# 开发/容器统一 Python 3.12；元数据兼容范围为 3.10-3.12，见根 README。
 requires-python = ">=3.10,<3.13"
 dependencies = [
     # Web 框架
@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# 本地向量化（bge 模型，首次自动下载 ~150MB）：仅本地开发需要；
+# 本地向量化（首次下载 EMBED_MODEL 对应模型）：仅本地推理需要；
 # 云端部署配 EMBED_BASE_URL 走远程 /embeddings，不装 fastembed 以缩小镜像。
 local = [
     "fastembed>=0.3",

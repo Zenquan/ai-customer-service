@@ -80,6 +80,20 @@ class ChatStore(ABC):
         """按时间顺序返回会话全部消息。"""
 
     @abstractmethod
+    def assign_conversation(
+        self,
+        conversation_id: str,
+        assignee_id: str,
+        assignee_name: str,
+        assigned_at: str,
+    ) -> bool:
+        """CAS 抢占：仅当会话未被认领（assignee_id 为空）时成功，返回是否抢到。"""
+
+    @abstractmethod
+    def release_conversation(self, conversation_id: str, assignee_id: str) -> bool:
+        """CAS 释放：仅当当前经办人等于 assignee_id 时成功，返回是否释放成功。"""
+
+    @abstractmethod
     def save_checkpoint(self, conversation_id: str, state: dict) -> None:
         """保存图状态快照。"""
 
@@ -121,6 +135,9 @@ class MemoryChatStore(ChatStore):
                     "tenant_id": tenant_id,
                     "status": "open",
                     "handoff_reason": None,
+                    "assignee_id": None,
+                    "assignee_name": None,
+                    "assigned_at": None,
                     "created_at": now,
                     "updated_at": now,
                     "messages": [],
@@ -149,6 +166,33 @@ class MemoryChatStore(ChatStore):
             conversation = self._conversations.get(conversation_id)
             return list(conversation["messages"]) if conversation else []
 
+    def assign_conversation(
+        self,
+        conversation_id: str,
+        assignee_id: str,
+        assignee_name: str,
+        assigned_at: str,
+    ) -> bool:
+        with self._lock:
+            conversation = self._conversations.get(conversation_id)
+            if conversation is None or conversation.get("assignee_id"):
+                return False
+            conversation["assignee_id"] = assignee_id
+            conversation["assignee_name"] = assignee_name
+            conversation["assigned_at"] = assigned_at
+            conversation["updated_at"] = assigned_at
+            return True
+
+    def release_conversation(self, conversation_id: str, assignee_id: str) -> bool:
+        with self._lock:
+            conversation = self._conversations.get(conversation_id)
+            if conversation is None or conversation.get("assignee_id") != assignee_id:
+                return False
+            conversation["assignee_id"] = None
+            conversation["assignee_name"] = None
+            conversation["assigned_at"] = None
+            return True
+
     def list_conversations(self, limit: int = 50) -> list[dict]:
         with self._lock:
             conversations = sorted(
@@ -161,6 +205,9 @@ class MemoryChatStore(ChatStore):
                     "id": item["id"],
                     "status": item["status"],
                     "handoff_reason": item["handoff_reason"],
+                    "assignee_id": item.get("assignee_id"),
+                    "assignee_name": item.get("assignee_name"),
+                    "assigned_at": item.get("assigned_at"),
                     "created_at": item["created_at"],
                     "updated_at": item["updated_at"],
                     "message_count": len(item["messages"]),
@@ -197,6 +244,27 @@ def _env_int(name: str, default: int) -> int:
 class MysqlChatStore(ChatStore):
     """MySQL 会话存储：pymysql 短连接，单操作单连接。"""
 
+    # 全新库建表；已存在的旧表由 ensure_schema 幂等补列（见 _ASSIGNEE_COLUMNS）。
+    _DDL = (
+        "CREATE TABLE IF NOT EXISTS conversations ("
+        "id VARCHAR(191) NOT NULL PRIMARY KEY, "
+        "user_id VARCHAR(64) NULL, "
+        "tenant_id VARCHAR(64) NULL, "
+        "status VARCHAR(32) NULL, "
+        "handoff_reason VARCHAR(255) NULL, "
+        "assignee_id VARCHAR(64) NULL, "
+        "assignee_name VARCHAR(64) NULL, "
+        "assigned_at DATETIME NULL, "
+        "created_at DATETIME(3) NULL, "
+        "updated_at DATETIME(3) NULL"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    )
+    _ASSIGNEE_COLUMNS = (
+        ("assignee_id", "VARCHAR(64) NULL"),
+        ("assignee_name", "VARCHAR(64) NULL"),
+        ("assigned_at", "DATETIME NULL"),
+    )
+
     def __init__(self) -> None:
         host = os.environ.get("MYSQL_HOST")
         if not host:
@@ -219,6 +287,25 @@ class MysqlChatStore(ChatStore):
 
         return pymysql.connect(**self._config)
 
+    def ensure_schema(self) -> None:
+        """幂等建表 + 旧表补 assignee 列；失败抛 StoreUnavailable，由调用方回退内存。"""
+        import pymysql
+
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(self._DDL)
+                    cursor.execute("SHOW COLUMNS FROM conversations")
+                    existing = {row[0] for row in cursor.fetchall()}
+                    for name, definition in self._ASSIGNEE_COLUMNS:
+                        if name not in existing:
+                            cursor.execute(
+                                f"ALTER TABLE conversations ADD COLUMN {name} {definition}"
+                            )
+                conn.commit()
+        except pymysql.MySQLError as exc:
+            raise StoreUnavailable(f"MySQL 初始化 conversations 表失败: {exc}") from exc
+
     def get_conversation(self, conversation_id: str) -> dict | None:
         import pymysql
 
@@ -226,7 +313,8 @@ class MysqlChatStore(ChatStore):
             with self._connect() as conn:
                 with conn.cursor(pymysql.cursors.DictCursor) as cursor:
                     cursor.execute(
-                        "SELECT id, user_id, tenant_id, status, handoff_reason, created_at, updated_at "
+                        "SELECT id, user_id, tenant_id, status, handoff_reason, "
+                        "assignee_id, assignee_name, assigned_at, created_at, updated_at "
                         "FROM conversations WHERE id = %s",
                         (conversation_id,),
                     )
@@ -241,6 +329,9 @@ class MysqlChatStore(ChatStore):
             "tenant_id": row["tenant_id"],
             "status": row["status"],
             "handoff_reason": row["handoff_reason"],
+            "assignee_id": row["assignee_id"],
+            "assignee_name": row["assignee_name"],
+            "assigned_at": _dt_to_iso(row["assigned_at"]),
             "created_at": _dt_to_iso(row["created_at"]),
             "updated_at": _dt_to_iso(row["updated_at"]),
         }
@@ -269,12 +360,22 @@ class MysqlChatStore(ChatStore):
         return self.get_conversation(conversation_id)  # type: ignore[return-value]
 
     def update_conversation(self, conversation_id: str, **fields: Any) -> dict | None:
-        allowed = {"status", "handoff_reason", "user_id", "tenant_id", "updated_at"}
+        allowed = {
+            "status",
+            "handoff_reason",
+            "user_id",
+            "tenant_id",
+            "assignee_id",
+            "assignee_name",
+            "assigned_at",
+            "updated_at",
+        }
         updates = {key: value for key, value in fields.items() if key in allowed}
         if not updates:
             return self.get_conversation(conversation_id)
-        if "updated_at" in updates and isinstance(updates["updated_at"], str):
-            updates["updated_at"] = datetime.fromisoformat(updates["updated_at"])
+        for key in ("updated_at", "assigned_at"):
+            if key in updates and isinstance(updates[key], str):
+                updates[key] = datetime.fromisoformat(updates[key])
         sets = ", ".join(f"{key} = %s" for key in updates)
         values = list(updates.values()) + [conversation_id]
         try:
@@ -352,13 +453,16 @@ class MysqlChatStore(ChatStore):
             with self._connect() as conn:
                 with conn.cursor(pymysql.cursors.DictCursor) as cursor:
                     cursor.execute(
-                        "SELECT c.id, c.status, c.handoff_reason, c.created_at, c.updated_at, "
+                        "SELECT c.id, c.status, c.handoff_reason, "
+                        "c.assignee_id, c.assignee_name, c.assigned_at, "
+                        "c.created_at, c.updated_at, "
                         "COUNT(m.id) AS message_count, "
                         "(SELECT m2.content FROM messages m2 "
                         " WHERE m2.conversation_id = c.id AND m2.role = 'user' "
                         " ORDER BY m2.created_at ASC, m2.id ASC LIMIT 1) AS first_message "
                         "FROM conversations c LEFT JOIN messages m ON m.conversation_id = c.id "
-                        "GROUP BY c.id, c.status, c.handoff_reason, c.created_at, c.updated_at "
+                        "GROUP BY c.id, c.status, c.handoff_reason, "
+                        "c.assignee_id, c.assignee_name, c.assigned_at, c.created_at, c.updated_at "
                         "ORDER BY c.updated_at DESC LIMIT %s",
                         (int(limit),),
                     )
@@ -370,6 +474,9 @@ class MysqlChatStore(ChatStore):
                 "id": row["id"],
                 "status": row["status"],
                 "handoff_reason": row["handoff_reason"],
+                "assignee_id": row["assignee_id"],
+                "assignee_name": row["assignee_name"],
+                "assigned_at": _dt_to_iso(row["assigned_at"]),
                 "created_at": _dt_to_iso(row["created_at"]),
                 "updated_at": _dt_to_iso(row["updated_at"]),
                 "message_count": int(row["message_count"]),
@@ -391,6 +498,46 @@ class MysqlChatStore(ChatStore):
                     )
         except Exception as exc:  # noqa: BLE001
             raise StoreUnavailable(f"MySQL 保存图状态失败: {exc}") from exc
+
+    def assign_conversation(
+        self,
+        conversation_id: str,
+        assignee_id: str,
+        assignee_name: str,
+        assigned_at: str,
+    ) -> bool:
+        import pymysql
+
+        if isinstance(assigned_at, str):
+            assigned_at = datetime.fromisoformat(assigned_at)
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE conversations SET assignee_id=%s, assignee_name=%s, assigned_at=%s "
+                        "WHERE id=%s AND assignee_id IS NULL",
+                        (assignee_id, assignee_name, assigned_at, conversation_id),
+                    )
+                    affected = cursor.rowcount
+        except pymysql.MySQLError as exc:
+            raise StoreUnavailable(f"MySQL 认领会话失败: {exc}") from exc
+        return affected == 1
+
+    def release_conversation(self, conversation_id: str, assignee_id: str) -> bool:
+        import pymysql
+
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE conversations SET assignee_id=NULL, assignee_name=NULL, assigned_at=NULL "
+                        "WHERE id=%s AND assignee_id=%s",
+                        (conversation_id, assignee_id),
+                    )
+                    affected = cursor.rowcount
+        except pymysql.MySQLError as exc:
+            raise StoreUnavailable(f"MySQL 释放会话失败: {exc}") from exc
+        return affected == 1
 
     def load_checkpoint(self, conversation_id: str) -> dict | None:
         import pymysql
@@ -425,7 +572,9 @@ def build_default_store() -> tuple[ChatStore, str]:
     """
     if os.environ.get("MYSQL_HOST"):
         try:
-            return MysqlChatStore(), "mysql"
+            store = MysqlChatStore()
+            store.ensure_schema()
+            return store, "mysql"
         except StoreUnavailable as exc:
             logger.warning("MySQL 不可用，回退内存存储: %s", exc)
             return MemoryChatStore(), "memory_fallback"

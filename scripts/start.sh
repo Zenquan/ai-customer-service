@@ -13,7 +13,7 @@ FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 
 echo "项目目录：$ROOT_DIR"
 
-# ── 后端 Python（必须 3.12，见 README「为什么锁 3.12」）──
+# ── 后端 Python（统一使用 3.12，见 README「Python 与依赖约束」）──
 PYTHON_BIN="${PYTHON_BIN:-$SERVER_DIR/.venv/bin/python}"
 if [[ ! -x "$PYTHON_BIN" ]]; then
   echo "❌ 未找到 server/.venv 中的 Python 3.12。请先创建后端虚拟环境："
@@ -58,7 +58,7 @@ echo "📦 首次启动：安装前端依赖..."
   (cd "$ROOT_DIR/web" && pnpm install) || exit 1
 fi
 
-# ── FastEmbed 模型缓存目录（避免首次冷启动下载模型）──
+# ── FastEmbed 模型缓存目录（首次仍需下载，缓存用于后续复用）──
 FASTEMBED_CACHE_PATH="$SERVER_DIR/data/fastembed_cache"
 mkdir -p "$FASTEMBED_CACHE_PATH"
 export FASTEMBED_CACHE_PATH

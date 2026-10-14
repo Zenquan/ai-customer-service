@@ -1,115 +1,77 @@
-# 坐席分配方案（转人工自动分配）
+# 坐席分配：当前实现与后续计划
 
-> 状态：待评审。落地前需先敲定第 2 节的几个决策点。
+> 校准日期：2026-10-14。原方案的多坐席、领取/释放、基础自动指派与前端分栏已经实现；在线状态、超时回池、技能组尚未实现。
 
-## 0. 现状与问题
+## 已采用的设计
 
-当前「转人工」只做了**状态标记**，没有「分配」这一环：
-
-| 能力 | 现状 |
+| 能力 | 当前行为 |
 | --- | --- |
-| 会话归属 | `conversations` 无坐席字段（仅 `id/user_id/tenant_id/status/handoff_reason/created_at/updated_at`） |
-| 坐席账号 | 仅 1 个 `operator`（`zenquan`/“Zenquan”），硬编码 demo 账号，注释已标注「后续替换 MySQL 用户表」 |
-| 转人工后 | 会话进**公海池**：所有 `handoff` 会话并列展示，任何运营都能回复 |
-| 回复记录 | `manual_reply` 的 `agent_name`（默认 `"Zenquan"`）**只写日志和返回体，不落库**，事后查不到「这单谁接的」 |
-| 并发 | 无抢占/锁，两个坐席可同时打开同一会话 |
+| 账号来源 | 默认演示 operator + `AUTH_OPERATORS` 注入额外坐席，复用 `AuthUser` |
+| 会话归属 | `assignee_id` / `assignee_name` / `assigned_at`，MySQL 与内存双实现 |
+| 领取 | `handoff/manual` 会话可领取；存储 CAS 仅空归属成功 |
+| 释放 | 仅当前归属坐席可释放，清空三字段，状态不变 |
+| 自动指派 | 转人工回复持久化后，在全量 operator 中选已分配会话数最少者 |
+| 回复身份 | 当前登录坐席 ID/展示名，客户端 `agent_name` 不再采信 |
+| 页面 | 「全部 / 我的 / 待分配」、领取按钮、归属名、当前登录坐席名 |
+| 审计 | claimed/released/manual_reply 事件含坐席 ID；审计存储有内存降级 |
 
-**问题**：无法把工单路由到具体坐席、无法防多人抢单、无法追溯经办人。
+无需为该实现创建独立 `agents` 或心跳表。坐席名称保存在会话和审计中，消息行本身没有专用经办人字段；人工回复响应携带名称和 ID。
 
-## 1. 目标
+## 配置多坐席
 
-1. 转人工后，会话能落到**具体坐席**（可自动指派，也可手动领取）。
-2. 支持**多坐席**（当前仅 1 个，需先扩展）。
-3. 事后可追溯「谁在什么时候接管」。
-4. 不破坏现有 `handoff → manual` 主链路。
+在后端启动环境中设置，或在启动脚本读取的根 `.env.local` 中追加（下面是 shell/dotenv 格式）：
 
-## 2. 关键决策（需拍板）
-
-### D1 · 坐席账号来源
-- **A（推荐）**：先扩 demo 账号支持多 `operator`（环境变量注入），坐席身份直接复用 `AuthUser`。改动小、无新表，适合当前 demo 阶段。
-- B：直接引入 `agents` 坐席表（MySQL + 内存回退），与 `AuthUser` 分离，支持坐席独立于登录账号管理。更重，但一步到位。
-
-### D2 · 分配模式
-- **A（推荐）**：**手动领取 + 系统自动指派混合**——转人工时若存在在线坐席则自动指派一个，否则进「待分配」池由坐席主动领取。
-- B：纯手动领取（坐席在「待分配」队列里点“领取”）。
-- C：纯自动指派（轮询 / 最少在办负载）。
-
-### D3 · 坐席在线状态（决定自动指派是否可用）
-- **A（推荐）**：P0 先不做在线状态，自动指派退化为「轮询/最少负载全量坐席」；坐席离线风险靠「超时重新分配」兜底。
-- B：P0 就做 `agent_status` 在线表 + 心跳，只给在线坐席派单。
-
-### D4 · 技能组路由（可选，P2）
-按 `intent` 路由（订单→订单组、投诉→投诉组）。当前坐席只有 1 个，建议**放到 P2**。
-
-## 3. 数据模型
-
-### 3.1 conversations 加列
+```bash
+AUTH_OPERATORS='[{"id":"op2","username":"bob","password":"replace-with-strong-password","display_name":"Bob"}]'
 ```
-assignee_id    VARCHAR(64)  NULL   -- 坐席 id（AuthUser.id）
-assignee_name  VARCHAR(64)  NULL   -- 冗余展示名
-assigned_at    DATETIME     NULL   -- 指派/领取时间
+
+缺省只有默认 operator；数组解析失败被忽略，无账号/密码的项跳过，ID 与默认用户冲突时跳过。修改后重启后端。账号仍是启动时加载的演示数据，不具备在线账号管理或密码重置。
+
+## 存储与 API
+
+`conversations` 自动建表并对老表幂等补列：
+
+```text
+assignee_id   VARCHAR(64) NULL
+assignee_name VARCHAR(64) NULL
+assigned_at   DATETIME NULL
 ```
-> 与现有「无 MySQL 回退内存」模式一致：`MemoryChatStore` 同样加这三字段；MySQL 侧 ALTER 幂等（首用检测列存在再 add）。
 
-### 3.2 可选新表（D1-B / D3-B 时才建）
-- `agents`：`id, name, status(online/offline), skills JSON, created_at, updated_at`
-- `agent_heartbeat`：`agent_id, last_seen`（在线状态心跳）
+MySQL 领取 `UPDATE ... WHERE assignee_id IS NULL`，根据受影响行数判定成功；内存用进程锁保护。存量空归属且处于 `handoff/manual` 的会话出现在待分配列表。
 
-## 4. 分配策略
+以下端点都要求 `operator` Bearer token，路径均相对 `/api/v1`：
 
-### 4.1 手动领取（P0 核心）
-- `POST /conversations/{id}/claim`，坐席领取。
-- 用 **CAS 抢占**（`UPDATE ... WHERE assignee_id IS NULL`，受影响行数 =1 才算抢到），杜绝两人同抢。
-- 已在 `manual`/已被他人领取的会话，领取失败返回明确错误码。
+| 端点 | 语义 |
+| --- | --- |
+| `GET /conversations?filter=all\|mine\|unassigned&limit=50` | mine 取登录坐席 ID；没有客户端 `agent_id` 过滤参数 |
+| `POST /conversations/{id}/claim` | 空请求体；成功返回 claimed 与归属；冲突/状态不符 409 |
+| `POST /conversations/{id}/release` | 空请求体；本人可释放，失败 409 |
+| `POST /conversations/{id}/messages/manual` | `{message}`；人工状态且归属允许才回复 |
+| `GET /agents` | ID、用户名、展示名、已分配会话计数 |
 
-### 4.2 自动指派（P1，D2-A）
-- 转人工落库时（`handoff` 状态写入处）触发 `assign()`：
-  - 有在线坐席 → 按策略（轮询 / 最少在办）选一个，写 `assignee_id`。
-  - 无可用坐席 → 留 `assignee_id=NULL`，进「待分配」池。
-- 策略默认「**最少在办负载**」（`COUNT(assignee_id=me AND status=handoff/manual)` 最小者），D3-A 下退化为全量坐席轮询。
+领取与释放不等于关闭会话；当前没有 closed 状态、结束接口或自动回到 AI。页面已封装 release API，但未提供释放按钮。请求示例见 [API 文档](api.md)。
 
-### 4.3 超时重新分配（P1 可选）
-坐席长时间未响应（如 >N 分钟无回复）自动回池（`assignee_id=NULL`）。依赖「会话最后活动时间」，用现有 `updated_at` 即可，不新增表。
+## 自动指派的实际口径
 
-## 5. API 设计
+服务层 `_auto_assign` 读取最近最多 1000 条会话，按 `assignee_id` 累计数量，选择最少的 operator；平局取账号遍历顺序靠前者。计数包含所读取范围内所有已分配会话，未只过滤 `handoff/manual`，也不代表坐席在线在办量。`GET /agents` 的 `active_count` 使用同样的截断计数。
 
-| 端点 | 变更 | 说明 |
+不检查登录会话、心跳、技能或响应超时。默认单坐席通常立即获得转人工会话，待分配池可能为空；没有可用坐席或自动指派失败时保留空归属。
+
+## 已知差距
+
+- 人工回复对已归属他人的会话做拒绝，但未分配会话自动认领的 CAS 失败返回值没有检查；并发领取后仍继续回复的竞争路径需要修复。
+- 自动指派计算与写入不是跨会话事务，多个并发转人工可能同时选择同一坐席；CAS 仅保证单会话归属写入。
+- 会话列表先取最近 500 条再过滤，默认返回 50；我的/待分配可能遗漏更早会话，尚无分页契约。
+- 没有在线/离线状态、超时重分配、技能组、工单生命周期或精确负载 SQL。
+- MySQL 失败回退内存，归属/审计无法跨进程持久化，也没有自动迁移历史。
+
+## 后续迭代与验收
+
+| 优先级 | 工作 | 验收 |
 | --- | --- | --- |
-| `GET /conversations` | 改 | 返回 `assignee_id/assignee_name/assigned_at`；支持 `?filter=mine|unassigned|all`、`?agent_id=` |
-| `POST /conversations/{id}/claim` | 新增 | 坐席领取，CAS 抢占，返回抢占结果 |
-| `POST /conversations/{id}/release` | 新增 | 坐席释放回池（可选） |
-| `POST /conversations/{id}/messages/manual` | 改 | 自动用**当前登录坐席**身份（不再依赖客户端传 `agent_name`），并校验 `assignee_id` |
-| `GET /agents` | 新增 | 坐席列表 + 在办数量（供分配/前端展示） |
+| P0 | 人工回复 CAS 失败后停止并校验归属 | 竞争领取/回复中失败者不落回复、不冒认身份 |
+| P1 | 分页、精确负载、人工状态过滤与释放入口 | 老会话可查，计数口径一致，释放后进入待分配 |
+| P1 | 在线状态、超时回池、关闭会话 | 只给可用坐席分配，未响应会话可回收 |
+| P2 | 技能组路由、工单对接 | 意图匹配技能组，可追溯交接与处理人 |
 
-## 6. 前端（运营工作台）
-
-- 会话队列按 **「待分配 / 我的 / 全部」** 分栏（Tab）。
-- 「待分配」会话显示「领取」按钮；「我的」只显示当前坐席的会话。
-- 人工回复区显示当前坐席名；回复即绑定当前坐席身份。
-- 客户聊天端无改动（仍只见 `handoff/manual` 文案）。
-
-## 7. 实施步骤（分阶段）
-
-- **P0 — 立坐席概念 + 手动领取**（核心，先做）
-  1. `AuthUser` 支持多 operator（D1-A：环境变量注入多账号）。
-  2. `conversations` 加 `assignee_id/name/assigned_at`（MySQL + Memory 双实现，幂等建表/加列）。
-  3. `claim` / `release` 接口（CAS 抢单）。
-  4. `manual_reply` 改用登录身份 + `assignee` 校验。
-  5. 前端「待分配 / 我的」分栏 + 领取按钮。
-- **P1 — 自动指派 + 超时回池**
-  6. 转人工时自动 `assign()`（最少负载 / 轮询）。
-  7. 超时未响应回池。
-- **P2 — 在线状态 + 技能组**（可选，按需）
-  8. `agents` + `agent_heartbeat`；`intent → 技能组` 路由。
-
-## 8. 风险与边界
-
-- **并发抢单**：靠 CAS 抢占 + 受影响行数校验解决；内存回退模式用进程锁。
-- **坐席离线滞留**：P0 靠「待分配池 + 手动领取」兜底，P1 加超时回池。
-- **单 operator 阶段**：只有 1 个坐席时，自动指派退化为「唯一坐席默认领取全部」，语义不变，不报错。
-- **存量数据**：旧会话 `assignee_id=NULL`，视为「待分配」，无迁移负担。
-- **兼容性**：不破坏 `handoff → manual` 链路，`agent_name` 由「客户端传」改为「服务端取登录身份」——需同步前端与既有调用方。
-
-## 9. 建议的起步组合
-
-**D1-A + D2-A + D3-A + D4 延后**：先扩多坐席账号、加会话归属、做「手动领取 + 简单自动指派（全量轮询/最少负载）」，在线状态与技能组留到 P1/P2。这个组合改动最小、能最快把「公海池」变成「有主工单」，同时保留后续扩展空间。
+已存在 `test_agent_assignment.py` 与存储/人工回复测试，本次全量后端通过；单元测试通过不证明上述并发和生产 SQL 边界已解决。验证范围见 [校准记录](documentation-audit.md)。

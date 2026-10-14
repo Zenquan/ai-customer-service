@@ -1,13 +1,14 @@
 /** 智应客服中心：会话队列 + AI 对话 + 实时上下文。 */
 
 import { useCallback, useEffect, useState } from 'react'
-import { App as AntApp, Badge, Button, Modal, Tooltip } from 'antd'
+import { App as AntApp, Badge, Button, Modal, Tooltip, message } from 'antd'
 import { AlertOutlined, DashboardOutlined } from '@ant-design/icons'
 import { XProvider } from '@ant-design/x'
 import AlertsPanel from './components/AlertsPanel'
 import ChatPanel from './components/ChatPanel'
 import ContextPanel from './components/ContextPanel'
 import ConversationSidebar from './components/ConversationSidebar'
+import type { ConversationFilter } from './components/ConversationSidebar'
 import CustomerChat from './components/CustomerChat'
 import KnowledgePanel from './components/KnowledgePanel'
 import LoginPage from './components/LoginPage'
@@ -38,6 +39,7 @@ export default function App() {
   const [materials, setMaterials] = useState<Material[]>([])
   // 真实会话列表（数据库）+ 当前选中会话（null = 新会话）
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
+  const [conversationFilter, setConversationFilter] = useState<ConversationFilter>('all')
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [conversationState, setConversationState] = useState<{
     conversationId: string
@@ -48,16 +50,34 @@ export default function App() {
     intent?: ChatMessage['intent']
   }>({ conversationId: '', responseMode: undefined, needsHuman: false, needsClarification: false, handoffReason: null })
 
-  // 刷新会话列表（挂载 + 每条消息发送后）
+  // 刷新会话列表（挂载 + 每条消息发送后 + 切 filter 时）
   const refreshConversations = useCallback(() => {
-    api.listConversations()
+    api.listConversations(conversationFilter)
       .then(setConversations)
       .catch(() => { /* 列表拉取失败静默，不阻塞聊天 */ })
-  }, [])
+  }, [conversationFilter])
 
   useEffect(() => {
     refreshConversations()
   }, [refreshConversations])
+
+  // 领取会话（CAS 抢单）：成功后选中该会话并刷新列表
+  const handleClaim = useCallback(
+    (conversationId: string) => {
+      api.claimConversation(conversationId)
+        .then(() => {
+          setActiveConversationId(conversationId)
+          setMaterials([])
+          setConversationState({ conversationId, responseMode: undefined, needsHuman: true, needsClarification: false, handoffReason: null, intent: undefined })
+          refreshConversations()
+        })
+        .catch((error) => {
+          message.error(`领取失败：${(error as Error).message ?? '未知错误'}`)
+          refreshConversations()
+        })
+    },
+    [refreshConversations],
+  )
 
   // 运营端轮询：客户新会话/人工队列变化时侧栏自动更新。
   useEffect(() => {
@@ -151,6 +171,9 @@ export default function App() {
               <ConversationSidebar
                 conversations={conversations}
                 activeId={activeConversationId ?? ''}
+                filter={conversationFilter}
+                onFilterChange={setConversationFilter}
+                onClaim={handleClaim}
                 onSelect={(conversationId) => {
                   setActiveConversationId(conversationId)
                   setMaterials([])

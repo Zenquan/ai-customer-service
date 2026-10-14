@@ -11,6 +11,7 @@ import { createCustomerServiceProvider } from '../lib/chat-provider'
 import type { ChatMessage } from '../lib/chat-provider'
 import { api } from '../lib/api'
 import type { Material } from '../lib/api'
+import { getAuthUser } from '../lib/auth'
 
 // 运营端布局反转：客户在左（"对方"位置）、运营/AI 回复在右（"自己"位置）。
 // 气泡保持 antd 默认灰色填充，不额外着色。
@@ -118,6 +119,7 @@ export default function ChatPanel({
     return found?.message as ChatMessage | undefined
   }, [messages])
   const manualMode = latestAssistant?.responseMode === 'handoff' || latestAssistant?.responseMode === 'manual'
+  const operatorName = getAuthUser()?.display_name ?? '客服运营'
 
   // 人工接管期间轮询：客户在另一端补充消息时，运营端自动更新。
   useEffect(() => {
@@ -203,7 +205,7 @@ export default function ChatPanel({
           <div className="chat-title-avatar"><RobotOutlined /></div>
           <div className="chat-title-line">
             <Typography.Title level={4}>{manualMode ? '人工接管会话' : 'AI 客服助手'}</Typography.Title>
-            <span className="chat-title-status"><i className={manualMode ? 'online-dot' : 'online-dot'} />{manualMode ? '人工坐席在线 · 直接回复' : '当前会话 · 自动接待'}</span>
+            <span className="chat-title-status"><i className={manualMode ? 'online-dot' : 'online-dot'} />{manualMode ? `坐席 ${operatorName} · 直接回复` : '当前会话 · 自动接待'}</span>
           </div>
         </div>
         <div className="chat-toolbar-actions">

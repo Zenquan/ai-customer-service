@@ -1,97 +1,71 @@
-# web/ · 前端（Vite + React 19 + TS + Ant Design X）
+# web · 智应客服中心前端
 
-RAG 产品前端：左侧知识库管理（antd）+ 右侧 AI 问答（Ant Design X）。开发时经 Vite proxy 把 `/api` 转发到 FastAPI 后端。
+> 校准日期：2026-10-14。当前提供登录、运营工作台和客户聊天窗，客服主链路使用 SSE。
 
-## 技术栈
+## 页面与技术栈
 
-| 包 | 用途 |
-| --- | --- |
-| [@ant-design/x](https://x.ant.design/) 2.9 | 对话 UI：`Bubble.List` / `Sender` / `Welcome` / `Prompts` / `Sources` / `XProvider` |
-| [@ant-design/x-sdk](https://github.com/ant-design/x/blob/main/packages/x/docs/x-sdk) | `DefaultChatProvider` + `useXChat`：消息状态机（local/loading/success/error/abort） |
-| [@ant-design/x-markdown](https://github.com/ant-design/x/blob/main/packages/x/docs/x-markdown) | AI 回答的 Markdown 渲染 |
-| antd 6 | 知识库面板：Upload / List / Statistic / Popconfirm / Alert |
-| Vite 8 + React 19 + TypeScript 6 | 脚手架（verbatimModuleSyntax 严格模式） |
+`App.tsx` 根据登录角色渲染：未登录显示 `LoginPage`；`customer` 显示 `CustomerChat`；`operator` 显示会话侧栏、对话主区与实时上下文。知识库管理、告警和性能看板通过弹窗打开。
 
-## 目录语义
+依赖范围见 `package.json`：React 19.2、TypeScript 6.0、Vite 8.2、antd 6.6、`@ant-design/x` / `x-sdk` / `x-markdown` 2.9。安装版本以 `pnpm-lock.yaml` 为准。
 
-```
+```text
 src/
-├── main.tsx                # 入口：StrictMode + App
-├── App.tsx                 # 布局：Header + Sider(340 KnowledgePanel) + Content(ChatPanel)，XProvider 全局
-├── lib/
-│   ├── api.ts              # 类型（Health/DocItem/IngestResult/Material/AskResult）+ fetch 薄封装
-│   └── chat-provider.ts    # 消息模型 + DefaultChatProvider（后端非流式对接核心）
-└── components/
-    ├── ChatPanel.tsx       # useXChat 状态 → Bubble.List items；空态 Welcome+Prompts；Sender 输入
-    ├── KnowledgePanel.tsx  # 健康统计 + 拖拽上传 + 文档列表 + 删除（Popconfirm）
-    └── AnswerView.tsx      # XMarkdown 正文 + 引用徽标 + Sources 引用卡片
+├─ main.tsx                 # StrictMode + App
+├─ App.tsx                  # 双角色页面、侧栏刷新、功能弹窗
+├─ lib/
+│  ├─ auth.ts               # 演示 token/用户缓存（localStorage + 内存）
+│  ├─ api.ts                # JSON 类型与请求，自动携带 Bearer token
+│  └─ chat-provider.ts      # 客服 SSE Provider + 兼容 ragProvider
+└─ components/
+   ├─ LoginPage.tsx / CustomerChat.tsx
+   ├─ ConversationSidebar.tsx # 全部/我的/待分配、领取、归属展示
+   ├─ ChatPanel.tsx           # useXChat、人工回复、消息轮询
+   ├─ ContextPanel.tsx        # 当前链路、检索依据
+   ├─ AnswerView.tsx          # Markdown、引用徽标与来源卡片
+   ├─ KnowledgePanel.tsx      # 上传/统计/列表/删除
+   ├─ AlertsPanel.tsx
+   └─ MetricsPanel.tsx
 ```
 
-## 核心：chat-provider.ts 对接非流式接口
+## 数据流
 
-后端 `/api/v1/ask` 返回**一次性完整 JSON**（不是 OpenAI 流式）。用 `DefaultChatProvider` 透传：
+`createCustomerServiceProvider(conversationId)` 请求 `POST /api/v1/conversations/{id}/messages/stream`，创建时读取当前 token 放入 Authorization。`transformParams` 只提交 `{message}`，用户身份由后端 token 解析。
 
-```ts
-export const ragProvider = new DefaultChatProvider<ChatMessage, AskInput, AskOutput>({
-  request: XRequest<AskInput, AskOutput>('/api/v1/ask', {
-    manual: true, method: 'POST', headers: { 'Content-Type': 'application/json' },
-  }),
-})
+| SSE 事件 | Provider 行为 |
+| --- | --- |
+| `progress` | 显示处理阶段，不拼进正文 |
+| `materials` | 保存检索素材 |
+| `token` | 把 `text` 增量拼接到当前回答 |
+| `meta` | 设置完整业务/澄清/转人工回答与路由状态 |
+| `done` | 更新回答、引用和校验结果 |
+| `error` | 保存错误，呈现失败状态 |
 
-// ① 请求体固定为 { query }
-ragProvider.transformParams = (requestParams) => ({ query: requestParams.query ?? '' })
+`ragProvider` 仍保留，用于兼容 `/api/v1/ask` 的非流式 JSON；主工作台与客户聊天窗使用客服 SSE Provider。完整协议见 [API 文档](../docs/api.md)。
 
-// ② 用户消息：本地立即显示
-ragProvider.transformLocalMessage = (requestParams) => ({ role: 'user', text: requestParams.query ?? '' })
+`useXChat` 管理请求状态与消息，`Bubble.List` 使用 `role` 配置与 `contentRender` 自定义渲染。人工回复调用 `api.sendManualReply`，身份取服务端登录坐席；客户端不再提交 `agent_name`。客户和工作台轮询消息，侧栏也定时刷新。列表数据来自后端，不依赖 `useXConversations` 的本地状态。
 
-// ③ 后端响应 → ChatMessage（answer + 素材 + 校验结果）
-ragProvider.transformMessage = (info) => {
-  const { chunk } = info
-  if (chunk?.error) return { role: 'assistant', text: '', error: chunk.error, materials: chunk.materials ?? [] }
-  return {
-    role: 'assistant',
-    text: chunk.answer ?? '',
-    materials: chunk.materials ?? [],
-    citations: chunk.citations ?? [],
-    citationValid: !!chunk.citation_valid,
-    error: undefined,
-  }
-}
-```
+领取按钮与会话筛选已经实现；释放 API 客户端已封装，当前页面没有释放按钮。额外坐席需配置后端 `AUTH_OPERATORS`，不能只在前端添加用户。
 
-`useXChat` 在 `ChatPanel` 里消费：`messages/onRequest/isRequesting/abort`；`requestPlaceholder`（请求中占位）、`requestFallback`（失败兜底）都交给 SDK 状态机。**Bubble.List 用 `role`（不是 roles）**映射用户/助手样式，`contentRender` 自定义渲染（Ant Design X 约定）。
+## 开发与构建
 
-## 开发命令
+从 `web/` 执行，先确保 Node 和 pnpm 均在 PATH（Docker/CI 使用 Node 22、pnpm 11.7.0）：
 
 ```bash
-pnpm install      # 首次（pnpm 11；根目录有 pnpm-workspace.yaml）
-pnpm dev          # http://localhost:5173（proxy /api → 127.0.0.1:8000）
+pnpm install --frozen-lockfile
+pnpm dev          # 默认 :5173，代理 /api → http://127.0.0.1:8000
 pnpm lint         # oxlint
-pnpm build        # tsc -b && vite build → dist/
-pnpm preview      # 预览构建产物（:4173，已加 CORS）
+pnpm build        # tsc -b && vite build，产物 dist/
+pnpm preview      # 默认 :4173，仅用于静态产物预览
 ```
 
-## 构建注意：highlight.js 版本锁
+`pnpm-workspace.yaml` 位于 `web/`，强制 `highlight.js: 10.7.0`，与传递依赖的语言文件导入匹配。修改依赖或 override 后才使用 `pnpm install --no-frozen-lockfile` 更新锁文件，提交前重新构建。
 
-`@ant-design/x-markdown` 的传递依赖 `react-syntax-highlighter` 异步加载 `highlight.js/lib/languages/sql_more`，而 pnpm 严格隔离可能解析到 **highlight.js@10.4.1（无 sql_more）**，导致 `vite build` 失败：
+Vite 只有 `server.proxy`，没有 `preview.proxy`。preview 的相对 `/api` 请求不会自动发往 :8000，后端允许 :4173 的 CORS 也不能代替代理。联调使用 `pnpm dev`；单容器部署由 FastAPI 同域托管前端。后端改端口时需同步 `vite.config.ts`，前端改端口时核对后端 CORS。
 
-```bash
-Error: Rolldown failed to resolve import "highlight.js/lib/languages/sql_more"
-```
+## 当前限制与验证
 
-**修复**：`pnpm-workspace.yaml` 强制统一版本（pnpm 11 的 overrides 已从 package.json 移到这里）：
+登录态存于 localStorage，没有令牌刷新或服务端注销；这属于演示认证。页面顶部「系统在线」文案是静态展示，不能作为模型、数据库或工具健康的证据。
 
-```yaml
-overrides:
-  'highlight.js@<10.7.0': '>=10.7.0'
-```
+来源徽标只反映序号校验；不能把「校验通过」等同答案事实无误。SSE 不经过 JSON 响应脱敏中间件，输出保护范围以实际服务链路为准。
 
-生效后 `pnpm install` 会统一到 10.7.0（含 sql_more），build 通过。**如果改了 overrides 后 pnpm 报 frozen lockfile 不一致，用 `pnpm install --no-frozen-lockfile` 重生成 lockfile。**
-
-## 前端设计要点
-
-1. **非流式对接模式**：不强行套 OpenAI 流式格式，`DefaultChatProvider` 透传 + `transformMessage` 组装——换流式时同一套 Provider 机制
-2. **防幻觉闭环可见性**：引用徽标（校验通过/含越界）+ 素材卡片展开原文，用户能自查回答依据
-3. **错误三态**：SDK 占位（思考中）→ 成功渲染 / 失败 Alert（后端 error 字段 / HTTP 500）都有明确 UI
-4. **前后端约定**：类型 `AskOutput` 与后端响应逐字段对应，接口契约在 `lib/api.ts` 一处维护
-5. **多会话演进**：换 `useXConversations`（x-sdk）即可加会话列表，Bubble.List items 结构不变
+本次 lint/build 与接口验证结果见 [校准记录](../docs/documentation-audit.md)。页面交互、移动端布局和线上连接须另外做浏览器验证。

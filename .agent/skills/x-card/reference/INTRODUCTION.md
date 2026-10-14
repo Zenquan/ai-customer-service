@@ -792,7 +792,7 @@ function App() {
 
 ## 下一步
 
-- 查看 [A2UI v0.9](/x-card/a2ui-v0.9) 了解最新协议规范和示例
+- 查看 [A2UI v0.9 接口参考](API.md) 了解当前参考文件中的协议与示例
 - 阅读 [A2UI 官方文档](https://a2ui.org/concepts/data-flow/) 了解协议设计理念
 - 浏览 [组件结构](https://a2ui.org/concepts/component-structure/) 学习邻接表模型
 - 参考 [数据绑定](https://a2ui.org/concepts/data-binding/) 掌握响应式更新

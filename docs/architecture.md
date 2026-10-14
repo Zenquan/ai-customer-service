@@ -1,213 +1,118 @@
-# 架构文档：RAG 知识问答产品
+# 智能客服系统架构
 
-> 本文档从**分层架构 → 端到端时序 → 关键设计决策**三个层次解释这个产品是怎么搭起来的，每个决策都给出「为什么这么做、不这么做会怎样」。
+> 校准日期：2026-10-14。本文描述当前代码实现；后续设计见 [规划](customer-service-plan.md)，本次检查证据见 [校准记录](documentation-audit.md)。
 
----
+## 分层与入口
 
-## 1. 分层架构
-
-产品分四层，职责严格分离，每一层都可以独立替换：
-
-```
-┌── 表现层（web/）───────────────────────────────────────────────┐
-│   React 19 + TS + Ant Design X（x 组件库）/ antd（表单、列表）   │
-│   · 对话：Bubble.List + Sender + Welcome + Prompts              │
-│   · 回答渲染：XMarkdown（正文）+ Sources（引用卡片）              │
-│   · 知识库：Upload / List / Statistic / Popconfirm              │
-│   数据流：lib/api.ts（fetch 薄封装）→ 非流式 JSON               │
-├── 接口层（app/api/）───────────────────────────────────────────┤
-│   FastAPI Router × 4：health / docs / ingest / ask              │
-│   · 只做 HTTP 语义：参数校验（Pydantic）、错误转 HTTPException、 │
-│     文件白名单与防穿越                                          │
-├── 服务融合层（app/services/rag.py）────────────────────────────│
-│   · sys.path 注入 rag 目录（零改动接入）                         │
-│   · threading.Lock 全局锁：Qdrant local 单进程 + Embedding 懒加载 │
-│   · 冻结的领域 API：ingest_files / ask / docs_list / health      │
-├── 领域核心层（rag/，独立仓库）───────────────────────────────── │
-│   ingest：MinerU→清洗→切块→向量→入库                             │
-│   ask：   混合检索→rerank→生成→引用校验                          │
-│   纯函数可单测（chunker/citations 零外部依赖）                   │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    UI[React 运营工作台 / 客户聊天窗] --> API[FastAPI server.main:app]
+    API --> AUTH[auth 演示 JWT 与角色依赖]
+    API --> CS[services.customer_service]
+    API --> RAG[services.rag]
+    CS --> GRAPH[graph.customer_service]
+    CS --> RAG
+    GRAPH --> CORE[core 检索 / 生成 / 引用校验]
+    GRAPH --> TOOL[tools.orders 演示只读工具]
+    RAG --> CORE
+    CORE --> QD[Qdrant local / remote]
+    CORE --> MODEL[Embedding / LLM / Rerank]
+    CS --> STORE[会话 / checkpoint / 指标 / 审计存储]
+    RAG --> DOC[MySQL rag_documents]
 ```
 
-**为什么这么分层**：rag 层是纯 Python 的「领域核心」，不依赖 FastAPI —— 这意味着它可以在 CLI、单测、服务三种环境复用同一个 `ask()` 函数，接口层只是薄壳。这也是「架构分层、职责单一」的直接证据。
+代码统一在 `server/src/server`：`api` 负责 HTTP 契约，`services` 融合业务和存储，`graph` 编排节点，`core` 实现 RAG，`tools` 封装业务源，`auth` 管理演示账号。包通过正规导入复用，没有旧版 `sys.path` 注入与独立 `rag/`、`langgraph/` 仓库。
 
----
+`server.main:app` 是模块级 FastAPI 实例，挂载 `/api/v1` 路由与根路径 `/metrics`、`/api-info`。`web/dist` 存在时挂载静态前端；`/docs`、`/redoc` 和 `/openapi.json` 是 FastAPI 自动文档。
 
-## 2. 端到端时序
+## 入库与检索
 
-### 2.1 入库链路（POST /api/v1/ingest）
+1. 上传 API 校验扩展名并取 basename，落盘到 `SERVER_ROOT/data/uploads`；同名文件覆盖，不提供文档版本。
+2. 服务层在 `rag_lock` 内逐文件处理。文本/Markdown 直读；其它格式尝试 MinerU、markitdown、文本降级，云解析使用内容 SHA-256 缓存。
+3. 结构切块按标题路径和完整段落聚合，目标 800、overlap 默认 0，长段落可超过目标长度。
+4. 本地 FastEmbed 或 OpenAI 兼容远程 embeddings 生成 1024 维向量，Qdrant upsert 并清除同文档过期序号。
+5. 配置 MySQL 时尝试保存文档切块、原文件字节和 SHA-256；失败不会回滚已写入向量库。
 
-```
-浏览器 KnowledgePanel
-  │  FormData(files[])  →  /api/v1/ingest
-  ▼
-app/api/ingest.py
-  │  ① 校验：扩展名白名单（pdf/txt/md/docx/html/图片）+ basename 防穿越
-  │  ② 落盘：rag/data/uploads/<filename>
-  ▼
-app/services/rag.py.ingest_files(file_paths)
-  │  ③ 持 rag_lock，逐文件调 rag_main.ingest(path)  （单文件模式）
-  ▼
-rag/main.py.ingest(path)
-  │  ④ rag/ingest.py.parse_document：
-  │      .txt/.md 直通 → sha256 缓存命中 → MinerU 云（有 token extract / 无 token flash）→ markitdown → 二进制兜底
-  │  ⑤ rag/chunker.py：清洗 → 解析标题层级 → 按章节/段落聚合（chunk_size 仅为目标）
-  │  ⑥ rag/embed_store.py：FastEmbed(bge-large-en-v1.5, 1024维) → Qdrant upsert
-  │     点 id = abs(hash(f"{doc}:{seq}")) % 2^63（稳定，重跑幂等覆盖）
-  ▼
-响应 { total, docs:[{name,chunks,inserted}], skipped:[], errors:[] }
-```
+CLI `ingest` 调核心，不经过 MySQL 备份。`services.rag.ingest_dir` 或上传 API 才具有文档备份步骤。
 
-### 2.2 问答链路（POST /api/v1/ask）
+查询时向量与标题加权 BM25 双路候选按 `(doc, seq)` 去重并 RRF 融合，`score += 1/(60 + rank)`；候选倍数默认 4，返回 top 5。精排有 key 才调用，默认 top 3 与最低阈值 0.3，失败回退融合结果。生成 Prompt 编号素材并要求 `[来源N]`，生成后校验序号范围。
 
-```
-浏览器 ChatPanel（useXChat）
-  │  { query } →  /api/v1/ask
-  ▼
-app/services/rag.py.ask(query, use_rerank, top_k)
-  ▼
-rag/main.py.ask(query)
-  │  ① retrieve()  —— 三层检索
-  │     a. 向量：query 向量化 → Qdrant 放宽候选                         # 语义召回
-  │     b. 关键词：标题加权 BM25 倒排召回                              # 术语精确
-  │     c. RRF 融合：score = Σ 1/(k+rank)，按 (doc,seq) 去重             # 双路互补
-  │     d. rerank（默认开）：bge-reranker → top 3 + 阈值过滤（失败回退）
-  │  ② generate()：
-  │     素材编号注入 [来源1]..[来源N]（含出处《doc》）
-  │     system 提示：只准用资料、必须 [来源N]、未覆盖写明"资料中未提及"
-  │     DeepSeek temperature=0.3, timeout=60s, max_retries=2
-  │  ③ verify_citations()：正则提取 [来源N] → 越界(>N 或 <=0) = 模型编造 → invalid
-  ▼
-响应 { query, answer, materials[], citations[], citation_valid, material_count, error }
-  ▼
-浏览器 AnswerView：XMarkdown 渲染正文 + Tag 徽标（引用校验结果）+ Sources 卡片（依据原文）
-```
+引用范围通过不能证明结论正确，没有引用也可能通过。同步客服图有非法引用重写分支；直接 `/ask` 和流式 RAG 返回校验标志，不保证相同重写行为。
 
----
+## 客服路由与人工状态
 
-## 3. 关键设计决策
+同步消息优先客服图，流式消息在服务层区分显性业务与知识请求：业务/订单续轮走图，知识问答走 RAG 流式。知识无素材首先追问，连续无进展后转人工。订单缺单号追问，查无此单第一次澄清、连续两次转人工；越权/超时/异常进入人工分支。
 
-### D1. rag 零改动接入产品（不 fork、不重写）
-
-**做法**：`app/services/rag.py` 在导入时 `sys.path.insert(0, rag 目录)`，然后 `import main as rag_main`、`from embed_store import delete_doc, list_docs`。
-
-**为什么**：rag 是独立 git 仓库（后来并入 fastapi-app 统一管理、30 个单测、CLI 全保留）。改成包（加 `__init__.py`、相对导入）会破坏它的独立可运行性。sys.path 注入让它「既能独立 CLI 跑，又能当库用」。
-
-**测试分层**：根目录 `pytest.ini` 统一入口（`rag/.venv/bin/python3.12 -m pytest` 一次跑全量 44 例）——rag 层打桩解析器/检索打桩、接口层打桩 `app.services.rag`，全部离线、不碰 Qdrant/LLM。
-
-**坑与规避**：模块名冲突——rag 入口叫 `main`，FastAPI 应用叫 `app.main`，两个 `main` 不会撞（Python 按完整模块名区分）。CLI 的 `python main.py` 走 `__main__`，与 `import main` 不冲突。
-
-### D2. Qdrant local 免 Docker + 单进程锁
-
-**做法**：`QdrantClient(path=…)` local 模式，向量库就是一个目录（`rag/qdrant_data/`）。代码与生产远端（`:memory:` 或 http://...:6333）同一套 API，切换只改构造参数。
-
-**单进程锁**：Qdrant local 同一目录同一时刻只允许一个进程访问（`AlreadyLocked`）。两个层面约束：
-1. `rag_lock = threading.Lock()` 串行化进程内所有库操作（含 FastEmbed 首次懒加载的并发保护）
-2. 启动命令要求 `--workers 1`（README 与 main.py docstring 都写明）
-
-### D3. 混合检索：关键词 + 向量双路召回，RRF 融合
-
-**为什么不是纯向量**：纯向量对「精确术语/编号」（如 JFT-300M、DeepFace）容易漏召回；纯关键词对「语义等价」（土豆↔马铃薯）失效。双路召回 + RRF 让两个召回器互补。关键词路由使用缓存倒排索引和 BM25，标题/章节字段额外加权。
-
-**RRF（Reciprocal Rank Fusion）**：对每条结果按排名倒数加权 `score += 1/(60 + rank)`，**不需要归一化分数**——不同召回器的分数量纲不同，直接相加会偏袒某一方；按排名融合天然鲁棒、零调参。
-
-**精排交给 rerank**：融合候选再送 bge-reranker（cross-encoder）做最终排序，取 top 3 注入 Prompt；可用 `RERANK_SCORE_THRESHOLD` 或请求参数过滤低相关结果。rerank 失败**静默回退**到融合结果。
-
-### D3.1 结构感知切块
-
-`chunk_text()` 先识别 Markdown ATX/Setext 标题，再按空行形成段落记录。每个 chunk 只聚合同一标题路径下的完整段落，`chunk_size` 是聚合目标而非硬上限；超长段落保持完整。每条 chunk 写入 `chapter`、`title`、`section`、`heading_path`，并把章节路径同时加入 embedding 输入和生成 Prompt。
-
-### D4. 防幻觉闭环（检索→生成→校验→可见）
-
-| 环节 | 机制 |
+| 会话状态 | 含义 |
 | --- | --- |
-| 生成前 | 素材编号注入 `[来源1]`，system 提示「只能用资料、必须标注、不知道就说不提及」 |
-| 生成后 | `verify_citations()` 正则提取引用序号，越界（>素材数或 ≤0）= 模型编造，标记 invalid |
-| 产品里 | 前端 Tag 徽标显示「引用 N · 校验通过/含越界引用」+ Sources 卡片可展开素材原文 |
+| `open` | AI 会话可继续 |
+| `waiting` | 等待补充信息 |
+| `handoff` | 等待人工处理 |
+| `manual` | 坐席已回复 |
 
-**为什么校验拦截而不是直接纠错**：模型「一本正经编造」时无法从生成侧彻底杜绝，但**程序校验是确定性**的——任何越界引用都能被抓住并明示。诚实展示比假装可信更有价值。
+人工状态客户新消息只入队并把状态更新为 `handoff`，不继续调用 AI。转人工回复持久化后尝试自动指派坐席；坐席人工回复从登录身份取名称，成功后进入 `manual`。`release` 仅清除坐席归属，不把会话切回 AI。
 
-### D5. 解析三级降级 + sha256 缓存
+SSE 使用 `progress/meta/materials/token/done/error`；业务正文通过 `meta` 一次发送，知识正文通过 `token` 增量发送。图分支 `done` 可能只含 `storage`，完整协议见 [API](api.md)。
 
-**链路**：`.txt/.md 直通 → MinerU 云（有 token extract 标准 / 无 token flash 免费）→ markitdown 本地轻量 → 二进制强解码兜底`。每一步失败都 `try/except` 降级，不中断整批入库。
+## 会话、图状态与数据
 
-**缓存**：以**文件内容 sha256** 为 key（不是路径/时间——改名/复制仍命中），结果落 `data/_parse_cache/<hash>.txt`。重复 ingest（含换 chunk_size 跑实验）不再调云，省 API 费。**配置了 MINERU_TOKEN 才能用标准 extract；无 token 会走 Flash 免费模式**（README/.env.example 已注明）。
+| 存储 | 当前用途 | 建表/恢复边界 |
+| --- | --- | --- |
+| `conversations` | 用户/租户占位、状态、人工原因、坐席归属 | 自动建表并补坐席三列 |
+| `messages` | 用户/助手内容、来源与回复模式 | 当前代码执行读写，没有自动建表逻辑 |
+| `graph_checkpoints` | 服务层知识澄清轮次状态 | 当前代码执行读写，没有自动建表逻辑 |
+| `langgraph_checkpoints` / `langgraph_checkpoint_writes` | 客服图原生 checkpoint | checkpointer 首用自动建表 |
+| `rag_documents` | 文档切块与可选原文件 | 当前代码没有自动建表/补原文件列逻辑 |
+| `evaluation_events` / `evaluation_alerts` | 评测事件与告警存储 | 对应组件自动建表 |
+| `rate_limit_counters` / `circuit_breaker_state` / `audit_logs` | 限流、熔断、审计 | 对应组件自动建表 |
 
-### D6. 上传安全：白名单 + 防路径穿越
+数据库名存在两套读取口径：会话/文档/checkpoint 用 `MYSQL_DB`，指标/告警用 `MYSQL_DATABASE`，其余组件兼容两者。部署时两者设为同一库。各组件回退独立发生，会话响应 `storage=mysql` 不代表文档、指标或 checkpoint 一定成功。
 
-- `Path(up.filename).name` 只取文件名（`../evil.pdf` → `evil.pdf`）
-- 扩展名白名单与 rag 的 `SUPPORTED_EXTS` 严格一致
-- 落盘目录固定 `rag/data/uploads/`，已被 rag/.gitignore 排除
+`messages`、`graph_checkpoints`、`rag_documents` 的现有字段与读写 SQL 分别以 `services/chat_store.py`、`services/doc_store.py` 为准。没有集中迁移脚本，不能宣称全新 MySQL 自动准备完毕。
 
-### D7. 前端 DefaultChatProvider 透传（非流式对接）
+会话存储无 MySQL 时为 `memory`，失败后为 `memory_fallback`，本进程不反复重连；回退不迁移 MySQL 历史，内存会随重启丢失。LangGraph 的 `thread_id=conversation_id`，checkpoint 的历史与槽位可跨轮保存；默认生成适配器不把历史传入核心 Prompt，因此不能称为完整多轮 LLM 记忆。
 
-后端 `/ask` 一次返回完整 JSON，不是 OpenAI 流式格式。方案：
-- `DefaultChatProvider<ChatMessage, AskInput, AskOutput>` 透传原始响应
-- `transformParams` 固定请求体 `{ query }`
-- `transformMessage` 把 `AskOutput` 组装成 `{ text, materials, citations, citationValid }`
-- `Bubble.List` 的 `role.contentRender` 用 `XMarkdown` + `Sources` 自定义渲染
+启动 lifespan 只有在 Qdrant 文档集合为空时才尝试从 MySQL 文档切块重建索引。已有部分索引不会自动补全缺失文档；恢复失败写日志而不阻止启动。原始文件虽可保存，当前恢复使用切块重新向量化，不重新解析原文件。
 
-**为什么不强上流式/SSE**：核心链路当前以「质量 + 可溯源」优先，非流式实现在不确定网络下更稳；后续要流式只需给 ask 加 SSE 分支，Provider 层 `transformMessage` 本来就是流式/整包两用的（x-sdk 设计）。
+Qdrant payload 包含 `doc/seq/text/para_range/chapter/title/section/heading_path`。ID 计算为：
 
-### D8. 模块名与命名空间纪律
-
-- 后端应用 `app.main` vs rag 核心 `main`：不冲突
-- rag 内部扁平导入（`import config`）依赖「rag 目录在 sys.path 首位」——`sys.path.insert(0, …)` 保证
-- 前端类型：`ChatMessage`/`AskInput`/`AskOutput` 全显式，`AskOutput` 类型 = 后端响应体逐字段对应
-
-### D9. 迭代纪律：git 小步提交
-
-- rag 核心 7 个 conventional commits（chore 骨架 → feat 每层 → test）
-- fastapi-app 同样按层提交（骨架 → 后端 → 前端 → 文档）
-- `.gitignore` 双保险：rag 独立忽略自己，fastapi-app 忽略 `rag/`（不产生 gitlink 嵌套）
-
----
-
-## 4. 数据模型
-
-**Qdrant point**（一条 chunk）：
-
-```jsonc
-{
-  "id": 7195160736229512000,          // abs(hash(f"{doc}:{seq}")) % 2^63，稳定幂等
-  "vector": [0.0123, ...1024 维],     // bge-large-en-v1.5
-  "payload": {
-    "doc": "rag-test-pdfs/DeepFace-ICCV2017.pdf",  // 文档名（含相对路径）
-    "seq": 12,                          // chunk 在文档内顺序（可定位原文）
-    "text": "……",                       // chunk 文本
-    "para_range": [3, 5],               // 覆盖段落区间（调试/溯源）
-    "chapter": "产品手册",              // 一级章节
-    "title": "部署",                    // 当前标题
-    "section": "产品手册 / 部署",       // 可读章节路径
-    "heading_path": ["产品手册", "部署"] // 完整标题层级
-  }
-}
+```python
+digest = hashlib.sha256(f"{doc_name}:{seq}".encode("utf-8")).digest()
+point_id = int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
 ```
 
-**文档级操作**（增量管理，不重建索引）：
-- `list_docs`：scroll 全量按 payload.doc 聚合 chunk 数
-- `delete_doc`：`scroll_filter=Filter(must=[doc == 目标])` 取 id 批量 delete
-- ⚠️ qdrant-client 1.9 参数是 `scroll_filter`（非 query_filter）+ limit 必填正整数（实测坑）
+默认 embedding 维度固定 1024，换模型须验证维度并重建匹配集合。
 
-## 5. 依赖与环境约束
+## 鉴权与安全范围
 
-| 项 | 值 | 为什么 |
-| --- | --- | --- |
-| Python | **3.12**（`requires-python >=3.10,<3.13`，全局统一 3.12） | rag 依赖 fastembed→onnxruntime，其 macOS x86_64 下无 cp313/cp314 wheel（详见根 README「为什么锁 3.12」）；langgraph 本身支持 3.14 |
-| HF 下载 | `HF_ENDPOINT=hf-mirror.com` + `HF_HUB_DISABLE_XET=1` | 国内直连 huggingface.co 超时；xet 后端不走镜像 401 |
-| Qdrant | local（path=） | 免 Docker、API 同生产；代价是单进程 |
-| 密钥 | `rag/.env`：DEEPSEEK_API_KEY 必填；MINERU_TOKEN / SILICONFLOW_API_KEY 可选 | 前端绝不能碰密钥（XRequest 安全指南：浏览器禁带 Authorization） |
+JWT 演示账号提供 `operator` / `customer`。会话列表、坐席、人工回复、领取/释放、指标摘要和近期告警要求运营角色；`/auth/me` 要求登录。客户消息可匿名，带有效 token 时身份取 token，客户端 `user_id` 被忽略。知识库端点、`/ask`、会话摘要/消息读取和 `/metrics` 当前没有认证依赖。
 
----
+`tenant_id` 只是预留字段，未实现知识库/会话多租户访问隔离；订单工具的本人校验不能代替所有资源鉴权。详见 [API 权限表](api.md)。
 
-## 6. 演进路线（TODO）
+规则分类器支持多意图优先级、提示注入模式和输入归一化；这些只覆盖当前基线。PII 脱敏接入生成 Prompt、评测/审计 payload 与 API JSON 响应；JSON 中间件跳过 SSE 和非 JSON，不能宣称所有流式 token 都已脱敏。
 
-智能客服的完整规划见 [docs/customer-service-plan.md](customer-service-plan.md)。当前建议保留 LangGraph 作为客服编排层，`rag/` 继续作为独立检索能力。
+限流仅覆盖客户消息 POST 和 stream，默认每 IP 30 次/60 秒，超限返回 429 + `Retry-After`；IP 读取 `X-Forwarded-For` 首项或连接来源。订单熔断只把 timeout/error 计为失败，不把 forbidden/not_found 计入。
 
-- [ ] ask 流式（SSE）：`XRequest` 流式解析 + `transformMessage` 增量，`Bubble typing` 效果
-- [ ] 会话历史：`useXConversations` 多会话 + 服务端持久化
-- [ ] 文档重解析/版本更新；上传进度/取消
-- [x] 离线检索评估：自建标注集输出 Recall@K / MRR，并支持切块粒度与 rerank 阈值实验
-- [ ] Docker 化：Qdrant 远端 + uvicorn + nginx 静态前端
-- [ ] 权限：多租户知识库隔离（payload 加 namespace 过滤）
+## 坐席与并发边界
+
+坐席字段 `assignee_id/assignee_name/assigned_at` 已实现 MySQL 与内存双存储；领取通过 CAS 写入，释放仅允许本人。自动指派在最近最多 1000 条会话中按已分配数量选最少者，平局依账号顺序，不检查在线状态、技能组或会话是否结束。
+
+人工回复先检查归属；未分配时尝试 CAS，但当前实现未检查 CAS 返回 False 后的竞争结果，不能宣称并发抢占与回复已经完全闭环。列表先取最近 500 条再过滤，坐席计数与指派先取最多 1000 条，存在截断。详见 [坐席文档](agent-assignment-plan.md)。
+
+Qdrant local 单目录只能由一个进程占用，服务层锁只保护本进程。运行单 worker；远端 Qdrant 解决向量库并发，不自动解决内存回退、指标单例或其它分配竞争问题。
+
+## 指标、告警与日志
+
+JSON `/api/v1/metrics/summary` 支持内存和 MySQL 聚合，含请求量、路由计数、工具状态与时延 P50/P95。一次解决是单条评测事件“无追问/未转人工/无错误”的代理指标，不是用户确认解决率；“无依据承诺”实际以 `citation_valid=false` 近似。
+
+Prometheus `/metrics` 和应用内 `AlertEvaluator` 只消费 recorder 的内存 `events`；MySQL recorder 没有该属性，当前不会读取数据库事件聚合。应用告警默认对全部内存事件累计计算，达到最小 10 样本且比率 >= 阈值触发，没有按时间滑动、去重或冷却。
+
+Prometheus 路由每次抓取调用 `set_recorder` 重置事件游标，可能重复累加已见事件；因此不能据此宣称重复抓取计数幂等。Grafana/Prometheus 配置只是监控配置文件，实际趋势需修正聚合并部署验证。
+
+请求 middleware 设置 `X-Request-ID`，业务日志带当前 trace_id，默认 INFO 可用 `LOG_LEVEL` 覆盖；无请求上下文时为 `-`。本次测试覆盖组件契约，未验证生产 SQL、外部模型或真实网络业务。
+
+## 部署与待办
+
+Docker 多阶段构建前端，Python 3.12 运行后端、同域静态页面、默认端口 80，远程 embedding 代替 FastEmbed。健康端点读库统计与配置，不检查 LLM、MySQL 或业务工具是否就绪；当前没有 `/ready`。
+
+优先补齐：全资源鉴权/租户隔离、数据库迁移、监控 SQL 聚合与抓取幂等、人工回复 CAS 校验、坐席负载分页与在线状态、真实业务源和生产认证。版本路线见 [规划](customer-service-plan.md)。

@@ -24,7 +24,8 @@ class MessageRequest(BaseModel):
 
 class ManualReplyRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000, description="人工坐席回复")
-    agent_name: str | None = Field(default="Zenquan", min_length=1, max_length=64, description="坐席名称")
+    # 保留字段以兼容旧客户端；服务端现以登录坐席身份为准，不再采信客户端自报名称。
+    agent_name: str | None = Field(default=None, min_length=1, max_length=64, description="坐席名称（已废弃）")
 
 
 def _sse(event: dict) -> str:
@@ -34,8 +35,14 @@ def _sse(event: dict) -> str:
 
 
 @router.get("/conversations")
-async def list_conversations(limit: int = 50) -> list[dict]:
-    return customer_service.list_conversations(limit)
+async def list_conversations(
+    limit: int = 50,
+    filter: str = "all",
+    operator: AuthUser = Depends(get_operator),
+) -> list[dict]:
+    """会话列表，支持 filter=all/mine/unassigned（mine 按当前登录坐席过滤）。"""
+    agent_id = operator.id if filter == "mine" else None
+    return customer_service.list_conversations(limit, filter=filter, agent_id=agent_id)
 
 
 @router.get("/conversations/{conversation_id}")
@@ -110,17 +117,55 @@ async def stream_message(
 async def manual_reply(
     conversation_id: str,
     req: ManualReplyRequest,
-    _operator: AuthUser = Depends(get_operator),
+    operator: AuthUser = Depends(get_operator),
 ) -> dict:
-    """人工接管后，坐席直接回复（response_mode=manual）。"""
+    """人工接管后，坐席直接回复（response_mode=manual），身份取当前登录坐席。"""
     try:
         return await run_in_threadpool(
             customer_service.send_manual_reply,
             conversation_id,
             req.message,
-            req.agent_name or "Zenquan",
+            operator,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/conversations/{conversation_id}/claim")
+async def claim_conversation(
+    conversation_id: str,
+    operator: AuthUser = Depends(get_operator),
+) -> dict:
+    """坐席领取会话（CAS 抢单，防止两人同抢）。"""
+    try:
+        return await run_in_threadpool(
+            customer_service.claim_conversation, conversation_id, operator
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/conversations/{conversation_id}/release")
+async def release_conversation(
+    conversation_id: str,
+    operator: AuthUser = Depends(get_operator),
+) -> dict:
+    """坐席释放会话回池（仅本人认领的会话可释放）。"""
+    try:
+        return await run_in_threadpool(
+            customer_service.release_conversation, conversation_id, operator
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/agents")
+async def list_agents(_operator: AuthUser = Depends(get_operator)) -> list[dict]:
+    """坐席列表 + 各自在办数量。"""
+    return customer_service.list_agents()

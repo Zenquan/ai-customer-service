@@ -6,7 +6,7 @@
   3. 入库
   4. 跑 eval_cases.json，输出 Recall@K / MRR
 
-用法：.venv/bin/python exp_chunk_size.py
+用法：.venv/bin/python -m server.core.exp_chunk_size（仅在隔离实验索引上运行）
 """
 from __future__ import annotations
 
